@@ -1098,6 +1098,32 @@ a {
   line-height: 1.6;
 }
 
+.stage-loading {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  pointer-events: none;
+}
+
+.stage-spin {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(255, 255, 255, 0.28);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: stage-spin 0.8s linear infinite;
+}
+
+@keyframes stage-spin {
+  to { transform: rotate(360deg); }
+}
+
 .stage-center {
   width: 64px;
   height: 64px;

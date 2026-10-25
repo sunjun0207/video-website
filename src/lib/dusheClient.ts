@@ -24,6 +24,8 @@ let searchToken = ''
 let homeCache: { videos: VideoItem[] } | null = null
 let homeAt = 0
 const playCache = new Map<string, { at: number; value: { url: string; line: string } }>()
+const playInflight = new Map<string, Promise<{ url: string; line: string }>>()
+const preferredLine = new Map<string, string>()
 
 function decode(text: string): string {
   return text
@@ -348,13 +350,16 @@ function chooseVariant(text: string, playlistUrl: string): string {
     variants.push({ bandwidth, url: new URL(uri, playlistUrl).href })
   }
   if (!variants.length) return playlistUrl
-  const usable = variants.filter((item) => item.bandwidth >= 400000 && item.bandwidth <= 2_500_000)
+  const usable = variants.filter((item) => item.bandwidth > 0 && item.bandwidth <= 1_000_000)
   const pool = usable.length ? usable : variants
-  return pool.sort((a, b) => a.bandwidth - b.bandwidth)[0].url
+  const sorted = usable.length
+    ? pool.sort((a, b) => b.bandwidth - a.bandwidth)
+    : pool.sort((a, b) => a.bandwidth - b.bandwidth)
+  return sorted[0].url
 }
 
 async function readPlaylist(upstream: string): Promise<{ text: string; url: string }> {
-  const response = await fetch(playProxy(upstream))
+  const response = await fetch(playProxy(upstream), { signal: AbortSignal.timeout(7000) })
   const text = await response.text()
   if (!response.ok || !text.includes('#EXTM3U')) throw new Error('播放列表无效')
   return { text, url: upstreamFromPlay(response.url) || upstream }
@@ -403,32 +408,71 @@ async function readLimited(
   return { bytes, aborted, size: headerSize || total, headerSize }
 }
 
-type ProbeEntry = PlayLine & { mediaUrl?: string; ratio?: number }
+type ProbeEntry = PlayLine & { mediaUrl?: string; ratio?: number; bitrate?: number }
 
-async function probeEntry(entry: PlayLine): Promise<ProbeEntry | null> {
+function seriesId(playPath: string) {
+  return playPath.match(/\/play\/(\d+)-/)?.[1] || ''
+}
+
+function lineSignature(entry: { label: string; note: string }) {
+  return `${entry.label} ${entry.note}`.trim()
+}
+
+function playValue(entry: ProbeEntry) {
+  return {
+    url: absolutePlayUrl(entry.mediaUrl || ''),
+    line: [entry.label, entry.note].filter(Boolean).join(' · '),
+  }
+}
+
+function streamUrl(_playlistText: string, playlistUrl: string, mediaUrl: string) {
+  return mediaUrl || playlistUrl
+}
+
+function firstSegment(text: string) {
+  const rows = text.split(/\r?\n/)
+  for (let index = 0; index < rows.length; index += 1) {
+    if (!rows[index].startsWith('#EXTINF:')) continue
+    const duration = Number.parseFloat(rows[index].slice(8))
+    const segment = (rows[index + 1] || '').trim()
+    if (segment && !segment.startsWith('#') && duration > 0) return { duration, segment }
+  }
+  return { duration: 0, segment: '' }
+}
+
+async function probeEntry(entry: PlayLine, quick = false): Promise<ProbeEntry | null> {
   const html = await fetchHtml(entry.playPath)
   const master = parsePlay(html)
   const playlist = await readPlaylist(master)
   const variantUrl = chooseVariant(playlist.text, playlist.url)
   const media = variantUrl === playlist.url ? playlist : await readPlaylist(variantUrl)
-  const rows = media.text.split(/\r?\n/)
-  let duration = 0
-  let segment = ''
-  for (let index = 0; index < rows.length; index += 1) {
-    if (!rows[index].startsWith('#EXTINF:')) continue
-    duration = Number.parseFloat(rows[index].slice(8))
-    segment = (rows[index + 1] || '').trim()
-    if (segment && !segment.startsWith('#')) break
+  if (quick) {
+    const first = firstSegment(media.text)
+    if (!first.segment) return null
+    const segmentUrl = new URL(first.segment, media.url).href
+    const started = Date.now()
+    const sample = await readLimited(playProxy(segmentUrl), 5000).catch(() => null)
+    const elapsed = Math.max((Date.now() - started) / 1000, 0.05)
+    const ratio = sample && sample.size ? (sample.bytes.length * first.duration) / (elapsed * sample.size) : 0
+    return {
+      ...entry,
+      mediaUrl: streamUrl(playlist.text, playlist.url, media.url),
+      bitrate: sample?.size ? (sample.size * 8) / first.duration : Number.POSITIVE_INFINITY,
+      ratio,
+    }
   }
+  const first = firstSegment(media.text)
+  const duration = first.duration
+  const segment = first.segment
   if (!segment || !duration) return null
   const segmentUrl = new URL(segment, media.url).href
   const started = Date.now()
-  const { bytes, aborted, size, headerSize } = await readLimited(playProxy(segmentUrl), 8000)
+  const { bytes, aborted, size, headerSize } = await readLimited(playProxy(segmentUrl), 4000)
   const elapsed = Math.max((Date.now() - started) / 1000, 0.05)
   if (!looksLikeMedia(bytes) || !size || (aborted && !headerSize)) return null
   return {
     ...entry,
-    mediaUrl: media.url,
+    mediaUrl: streamUrl(playlist.text, playlist.url, media.url),
     ratio: (bytes.length * duration) / (elapsed * size),
   }
 }
@@ -465,12 +509,22 @@ export async function loadSearch(keyword: string): Promise<VideoItem[]> {
   return parseSearch(await fetchHtml(`/search?${query}`))
 }
 
-export async function loadPlay(entries: PlayLine[], only = false): Promise<{ url: string; line: string }> {
+export function loadPlay(entries: PlayLine[], only = false): Promise<{ url: string; line: string }> {
   const list = entries.filter((entry) => PLAY_PATH.test(entry.playPath))
-  if (!list.length) throw new Error('没有播放地址')
+  if (!list.length) return Promise.reject(new Error('没有播放地址'))
   const key = `${only ? '1' : '0'}:${list.map((entry) => entry.playPath).join('|')}`
   const cached = playCache.get(key)
-  if (cached && Date.now() - cached.at < 5 * 60 * 1000) return cached.value
+  if (cached && Date.now() - cached.at < 5 * 60 * 1000) return Promise.resolve(cached.value)
+  const pending = playInflight.get(key)
+  if (pending) return pending
+  const task = resolvePlay(list, only, key)
+  playInflight.set(key, task)
+  return task.finally(() => {
+    playInflight.delete(key)
+  })
+}
+
+async function resolvePlay(list: PlayLine[], only: boolean, key: string): Promise<{ url: string; line: string }> {
   const ranked = [...list].sort((a, b) => lineRank(a.label, a.note) - lineRank(b.label, b.note))
   const picked: PlayLine[] = []
   const textOf = (entry: PlayLine) => `${entry.label} ${entry.note}`
@@ -483,6 +537,25 @@ export async function loadPlay(entries: PlayLine[], only = false): Promise<{ url
       count += 1
     }
   }
+  const series = seriesId(list[0].playPath)
+  const hint = series ? preferredLine.get(series) : ''
+  const hinted = hint ? ranked.find((entry) => lineSignature(entry) === hint) : undefined
+  const fast = ranked.filter((entry) => /播放快|标清/.test(textOf(entry))).slice(0, 2)
+  const starters = (only ? [ranked[0]] : [hinted, ...fast, ranked[0]])
+    .filter((entry, index, all): entry is PlayLine => Boolean(entry) && all.indexOf(entry) === index)
+    .slice(0, 2)
+  const measured = (
+    await Promise.all(starters.map((entry) => probeEntry(entry, true).catch(() => null)))
+  )
+    .filter((item): item is ProbeEntry => Boolean(item?.mediaUrl))
+    .sort((a, b) => (b.ratio || 0) - (a.ratio || 0))
+  const bestQuick = measured[0]
+  if (bestQuick?.mediaUrl) {
+    if (series) preferredLine.set(series, lineSignature(bestQuick))
+    const value = playValue(bestQuick)
+    playCache.set(key, { at: Date.now(), value })
+    return value
+  }
   if (only) picked.push(ranked[0])
   take((text) => /播放快|标清|720/.test(text), 2)
   take((text) => /大陆|香港/.test(text), 2)
@@ -493,15 +566,13 @@ export async function loadPlay(entries: PlayLine[], only = false): Promise<{ url
       (item): item is ProbeEntry => Boolean(item?.mediaUrl),
     )
     pool = pool.concat(found)
-    if (only || pool.some((item) => (item.ratio || 0) >= 2)) break
+    if (pool.some((item) => (item.ratio || 0) >= 1.2)) break
   }
   if (!pool.length) throw new Error('这一集没有可播放的线路')
   pool.sort((a, b) => (b.ratio || 0) - (a.ratio || 0))
   const best = pool[0]
-  const value = {
-    url: absolutePlayUrl(best.mediaUrl || ''),
-    line: [best.label, best.note].filter(Boolean).join(' · '),
-  }
+  if (series) preferredLine.set(series, lineSignature(best))
+  const value = playValue(best)
   playCache.set(key, { at: Date.now(), value })
   return value
 }
