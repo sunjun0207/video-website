@@ -52,12 +52,33 @@ export async function ensurePlayUrl(id: string, ep: number, onlyPath = ''): Prom
   return { url: data.url, line: episode.line }
 }
 
+const searchCache = new Map<string, { at: number; list: VideoItem[] }>()
+const searchInflight = new Map<string, Promise<VideoItem[]>>()
+
+export function cachedSearch(keyword: string): VideoItem[] | undefined {
+  return searchCache.get(keyword.trim())?.list
+}
+
 export async function searchRemote(keyword: string): Promise<VideoItem[]> {
-  const list = await loadSearch(keyword)
-  for (const item of list) {
-    if (!getVideo(item.id)) upsertVideo(item)
-  }
-  return list
+  const q = keyword.trim()
+  if (!q) return []
+  const hit = searchCache.get(q)
+  if (hit && Date.now() - hit.at < 20_000) return hit.list
+  const pending = searchInflight.get(q)
+  if (pending) return pending
+  const task = loadSearch(q)
+    .then((list) => {
+      for (const item of list) {
+        if (!getVideo(item.id)) upsertVideo(item)
+      }
+      searchCache.set(q, { at: Date.now(), list })
+      return list
+    })
+    .finally(() => {
+      searchInflight.delete(q)
+    })
+  searchInflight.set(q, task)
+  return task
 }
 
 export function useCatalog() {

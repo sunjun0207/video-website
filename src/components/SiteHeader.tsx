@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { suggestTitles } from '../lib/api'
 import { searchHash, type Route } from '../lib/route'
+import { useLiveSuggest } from '../lib/suggest'
 import { addSearchHistory, clearSearchHistory, getSearchHistory } from '../lib/storage'
 
 const DISCOVER = new Set<Route['name']>([
@@ -19,10 +19,10 @@ const DISCOVER = new Set<Route['name']>([
 export function SiteHeader({ route }: { route: Route }) {
   const [open, setOpen] = useState(false)
   const [keyword, setKeyword] = useState(route.name === 'search' ? route.q : '')
-  const [suggests, setSuggests] = useState<string[]>([])
   const [history, setHistory] = useState<string[]>([])
   const [suggestOpen, setSuggestOpen] = useState(false)
   const slotRef = useRef<HTMLDivElement>(null)
+  const { suggests, pending } = useLiveSuggest(keyword, suggestOpen)
 
   useEffect(() => {
     const close = () => setOpen(false)
@@ -38,15 +38,6 @@ export function SiteHeader({ route }: { route: Route }) {
   useEffect(() => {
     if (suggestOpen) setHistory(getSearchHistory())
   }, [suggestOpen, route.key])
-
-  useEffect(() => {
-    const q = keyword.trim()
-    if (!suggestOpen || !q) {
-      setSuggests([])
-      return
-    }
-    setSuggests(suggestTitles(q))
-  }, [keyword, suggestOpen])
 
   useEffect(() => {
     const onPointer = (event: PointerEvent) => {
@@ -66,7 +57,8 @@ export function SiteHeader({ route }: { route: Route }) {
     window.location.hash = searchHash(q)
   }
 
-  const panelOpen = suggestOpen && (keyword.trim() ? suggests.length > 0 : history.length > 0)
+  const typed = Boolean(keyword.trim())
+  const panelOpen = suggestOpen && (typed ? suggests.length > 0 || pending : history.length > 0)
 
   return (
     <header className="site-header">
@@ -134,13 +126,27 @@ export function SiteHeader({ route }: { route: Route }) {
                   </button>
                 </li>
               )}
-              {(keyword.trim() ? suggests : history).map((item) => (
-                <li key={item}>
-                  <button type="button" role="option" onClick={() => go(item)}>
-                    {item}
-                  </button>
+              {typed && pending && suggests.length === 0 ? (
+                <li className="suggest-label">
+                  <span>正在联想…</span>
                 </li>
-              ))}
+              ) : null}
+              {typed
+                ? suggests.map((item) => (
+                    <li key={item.title}>
+                      <button type="button" role="option" onClick={() => go(item.title)}>
+                        <span>{item.title}</span>
+                        {item.hint ? <small>{item.hint}</small> : null}
+                      </button>
+                    </li>
+                  ))
+                : history.map((item) => (
+                    <li key={item}>
+                      <button type="button" role="option" onClick={() => go(item)}>
+                        {item}
+                      </button>
+                    </li>
+                  ))}
             </ul>
           ) : null}
         </div>

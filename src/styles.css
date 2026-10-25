@@ -215,6 +215,10 @@ a {
 }
 
 .suggest-list button {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
   width: 100%;
   padding: 8px 10px;
   border: none;
@@ -222,6 +226,18 @@ a {
   background: transparent;
   color: var(--ink);
   text-align: left;
+}
+
+.suggest-list button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggest-list small {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .suggest-list button:hover {
@@ -578,6 +594,7 @@ a {
 .poster-card {
   color: inherit;
   text-decoration: none;
+  scroll-margin-top: 132px;
 }
 
 .poster-card strong {
@@ -659,6 +676,10 @@ a {
 .poster-card:hover .poster {
   transform: translateY(-4px);
   box-shadow: 0 12px 24px rgba(11, 31, 36, 0.16);
+}
+
+.poster-card.is-anchor .poster {
+  box-shadow: 0 0 0 3px var(--teal);
 }
 
 .poster-compact {
@@ -1208,10 +1229,20 @@ a {
   padding: 22px;
 }
 
-.search-hero form {
+.search-hero {
+  position: relative;
+  z-index: 2;
+}
+
+.search-box {
+  position: relative;
+  margin-bottom: 14px;
+}
+
+.search-hero form,
+.search-box form {
   display: flex;
   gap: 8px;
-  margin-bottom: 14px;
 }
 
 .search-hero input {
