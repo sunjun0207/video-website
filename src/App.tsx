@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { SiteFooter } from './components/SiteFooter'
 import { SiteHeader } from './components/SiteHeader'
 import { SubNav } from './components/SubNav'
-import { documentTitle } from './lib/title'
 import { useRoute } from './lib/route'
+import { searchAnchor } from './lib/storage'
+import { documentTitle } from './lib/title'
 import { AboutPage } from './pages/AboutPage'
 import { ChannelPage } from './pages/ChannelPage'
 import { ChannelsPage } from './pages/ChannelsPage'
@@ -26,6 +27,7 @@ export default function App() {
 
   useEffect(() => {
     document.title = documentTitle(route)
+    if (route.name === 'search' && searchAnchor(route.q)) return
     window.scrollTo(0, 0)
   }, [route])
 

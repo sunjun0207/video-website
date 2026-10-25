@@ -9,20 +9,27 @@ import type { VideoItem } from '../lib/types'
 export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; onLibraryChange: () => void }) {
   const [item, setItem] = useState<VideoItem | undefined>(() => getVideo(id))
   const [playUrl, setPlayUrl] = useState('')
+  const [readyKey, setReadyKey] = useState('')
   const [lineName, setLineName] = useState('')
   const [error, setError] = useState('')
   const [pick, setPick] = useState<{ id: string; ep: number; path: string } | null>(null)
   const savedAt = useRef(0)
+  const advanced = useRef(false)
   const index = item && item.episodes.length ? Math.min(Math.max(ep, 0), item.episodes.length - 1) : Math.max(ep, 0)
   const episode = item?.episodes[index]
   const history = item ? historyOf(item.id) : undefined
   const resumeAt = history && history.ep === index ? history.time : 0
   const forced = pick && pick.id === id && pick.ep === index ? pick.path : ''
+  const requestKey = `${id}:${index}:${forced}`
+  const activeUrl = readyKey === requestKey ? playUrl : ''
+
+  useEffect(() => {
+    advanced.current = false
+  }, [id, index])
 
   useEffect(() => {
     let live = true
     setError('')
-    setPlayUrl('')
     setLineName('')
     ensurePlayUrl(id, index, forced)
       .then((result) => {
@@ -30,6 +37,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
         setItem(getVideo(id))
         setPlayUrl(result.url)
         setLineName(result.line)
+        setReadyKey(requestKey)
       })
       .catch((reason: unknown) => {
         if (live) setError(reason instanceof Error ? reason.message : '这一段还没到来')
@@ -37,7 +45,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
     return () => {
       live = false
     }
-  }, [id, index, forced])
+  }, [id, index, forced, requestKey])
 
   useEffect(() => {
     if (!item) return
@@ -46,13 +54,21 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
   }, [item, index, onLibraryChange, resumeAt])
 
   if (error && !item) return <p className="note">{error}</p>
-  if (!item || !episode) return <p className="note">正在把这一段请到眼前…</p>
+  if (!item || !episode) return <p className="note">正在加载中…</p>
 
   const remember = (time: number) => {
     const now = Date.now()
     if (now - savedAt.current < 1500) return
     savedAt.current = now
     rememberPlay(item, index, time)
+  }
+
+  const goNext = () => {
+    if (advanced.current || index >= item.episodes.length - 1) return
+    advanced.current = true
+    rememberPlay(item, index + 1, 0)
+    onLibraryChange()
+    window.location.hash = `#/play/${item.id}/${index + 1}`
   }
 
   return (
@@ -67,14 +83,12 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
       <div className="play-layout">
         <div>
           <Player
-            episode={{ ...episode, url: playUrl || episode.url }}
-            resumeAt={resumeAt}
+            episode={{ ...episode, url: activeUrl }}
+            resumeAt={activeUrl ? resumeAt : 0}
+            notice={error}
             onTime={remember}
-            onEnded={() => {
-              if (index < item.episodes.length - 1) window.location.hash = `#/play/${item.id}/${index + 1}`
-            }}
+            onEnded={goNext}
           />
-          {error ? <p className="note">{error}</p> : null}
           <div className="play-copy">
             <h1>{item.title}</h1>
             <p className="meta">

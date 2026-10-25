@@ -3,9 +3,22 @@ import { metaLine } from '../lib/api'
 import { nextCover } from '../lib/mediaProxy'
 import type { VideoItem } from '../lib/types'
 
-export function Poster({ item }: { item: VideoItem }) {
+export function Poster({
+  item,
+  anchor = false,
+  onOpen,
+}: {
+  item: VideoItem
+  anchor?: boolean
+  onOpen?: () => void
+}) {
   return (
-    <a className="poster-card" href={`#/detail/${item.id}`}>
+    <a
+      className={anchor ? 'poster-card is-anchor' : 'poster-card'}
+      href={`#/detail/${item.id}`}
+      data-video-id={item.id}
+      onClick={onOpen}
+    >
       <PosterFace item={item} />
       <strong>{item.title}</strong>
       <span>{metaLine(item)}</span>
