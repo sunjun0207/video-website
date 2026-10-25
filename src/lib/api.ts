@@ -48,17 +48,26 @@ export function freshVideos(): VideoItem[] {
   return [...videos].sort((a, b) => b.year - a.year || b.hot - a.hot)
 }
 
-export function suggestTitles(keyword: string, limit = 8): string[] {
+export type SuggestHit = {
+  title: string
+  hint: string
+}
+
+export function suggestTitles(keyword: string, limit = 8): SuggestHit[] {
   const q = keyword.trim().toLowerCase()
   if (!q) return []
-  const titles: string[] = []
+  const hits: SuggestHit[] = []
   for (const item of videos) {
     const haystack = [item.title, item.director, ...item.actors].join(' ').toLowerCase()
     if (!haystack.includes(q)) continue
-    if (!titles.includes(item.title)) titles.push(item.title)
-    if (titles.length >= limit) break
+    if (hits.some((hit) => hit.title === item.title)) continue
+    hits.push({
+      title: item.title,
+      hint: [item.year || '', item.region].filter(Boolean).join(' · '),
+    })
+    if (hits.length >= limit) break
   }
-  return titles
+  return hits
 }
 
 export function hotVideos(limit = 10): VideoItem[] {

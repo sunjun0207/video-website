@@ -6,8 +6,18 @@ import type { Episode } from '../lib/types'
 type Props = {
   episode: Episode
   resumeAt: number
+  notice?: string
   onTime: (time: number) => void
   onEnded: () => void
+}
+
+function bufferedAhead(video: HTMLVideoElement) {
+  let ahead = 0
+  for (let index = 0; index < video.buffered.length; index += 1) {
+    const end = video.buffered.end(index)
+    if (end > video.currentTime) ahead = Math.max(ahead, end - video.currentTime)
+  }
+  return ahead
 }
 
 function formatTime(value: number): string {
@@ -20,30 +30,58 @@ function formatTime(value: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
-export function Player({ episode, resumeAt, onTime, onEnded }: Props) {
+const retryPolicy = {
+  maxTimeToFirstByteMs: 20000,
+  maxLoadTimeMs: 60000,
+  timeoutRetry: { maxNumRetry: 4, retryDelayMs: 400, maxRetryDelayMs: 4000 },
+  errorRetry: { maxNumRetry: 6, retryDelayMs: 800, maxRetryDelayMs: 8000 },
+}
+
+export function Player({ episode, resumeAt, notice = '', onTime, onEnded }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
+  const onEndedRef = useRef(onEnded)
   const resumed = useRef(false)
+  const booted = useRef(false)
+  const played = useRef(false)
+  const finished = useRef(false)
   const [playing, setPlaying] = useState(false)
+  const [buffering, setBuffering] = useState(false)
+  const [blocked, setBlocked] = useState(false)
   const [current, setCurrent] = useState(0)
   const [duration, setDuration] = useState(0)
   const [error, setError] = useState('')
 
+  onEndedRef.current = onEnded
+
   useEffect(() => {
     resumed.current = false
+    booted.current = false
+    played.current = false
+    finished.current = false
     setError('')
     setPlaying(false)
+    setBuffering(false)
+    setBlocked(false)
     setCurrent(0)
+    setDuration(0)
     const video = videoRef.current
     if (!video || !episode.url) return
     let hls: Hls | undefined
+    let recovered = false
+    let still = 0
+    let lastTime = -1
+    const capLevel = (instance: Hls) => {
+      const capBitrate = 1_000_000
+      let cap = 0
+      instance.levels.forEach((level, index) => {
+        const bitrate = level.bitrate || 0
+        if (bitrate > 0 && bitrate <= capBitrate) cap = index
+      })
+      instance.autoLevelCapping = cap
+      instance.loadLevel = cap
+    }
     if (episode.url.includes('.m3u8') && Hls.isSupported()) {
-      const slow = {
-        maxTimeToFirstByteMs: 30000,
-        maxLoadTimeMs: 120000,
-        timeoutRetry: { maxNumRetry: 3, retryDelayMs: 500, maxRetryDelayMs: 4000 },
-        errorRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
-      }
       const BaseLoader = Hls.DefaultConfig.loader
       class ProxyLoader extends BaseLoader {
         load(...args: Parameters<InstanceType<typeof BaseLoader>['load']>) {
@@ -64,25 +102,68 @@ export function Player({ episode, resumeAt, onTime, onEnded }: Props) {
       }
       hls = new Hls({
         lowLatencyMode: false,
-        maxBufferLength: 48,
-        maxMaxBufferLength: 120,
-        backBufferLength: 30,
+        enableWorker: true,
+        startLevel: 0,
+        capLevelToPlayerSize: true,
+        abrEwmaDefaultEstimate: 600000,
+        abrBandWidthFactor: 0.8,
+        abrBandWidthUpFactor: 0.55,
+        maxBufferLength: 24,
+        maxMaxBufferLength: 42,
+        backBufferLength: 12,
+        maxBufferHole: 0.5,
         startFragPrefetch: true,
-        manifestLoadPolicy: { default: slow },
-        playlistLoadPolicy: { default: slow },
-        fragLoadPolicy: { default: slow },
+        maxStarvationDelay: 4,
+        maxLoadingDelay: 4,
+        nudgeOffset: 0.15,
+        nudgeMaxRetry: 12,
+        manifestLoadPolicy: { default: retryPolicy },
+        playlistLoadPolicy: { default: retryPolicy },
+        fragLoadPolicy: { default: retryPolicy },
         loader: ProxyLoader,
       })
       hls.loadSource(episode.url)
       hls.attachMedia(video)
+      hls.on(Hls.Events.MANIFEST_PARSED, () => capLevel(hls as Hls))
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) setError('这一段暂时安静了，换一条线路，或稍后再来。')
+        if (!data.fatal || !hls) return
+        if (!recovered) {
+          recovered = true
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
+          else hls.recoverMediaError()
+          return
+        }
+        setError('这一段暂时安静了，换一条线路，或稍后再来。')
       })
     } else {
       video.src = episode.url
       video.load()
     }
+    const stuckTimer = window.setInterval(() => {
+      if (!played.current || video.paused || video.ended || video.seeking) {
+        still = 0
+        lastTime = video.currentTime
+        return
+      }
+      if (lastTime >= 0 && Math.abs(video.currentTime - lastTime) > 0.2) {
+        still = 0
+        lastTime = video.currentTime
+        setBuffering(false)
+        return
+      }
+      lastTime = video.currentTime
+      still += 1
+      if (still >= 2) setBuffering(true)
+      if (still === 8 && hls) hls.startLoad()
+    }, 1000)
+    const bootTimer = window.setTimeout(() => {
+      if (booted.current) return
+      booted.current = true
+      void video.play().catch(() => setBlocked(true))
+    }, 7000)
     return () => {
+      window.clearInterval(stuckTimer)
+      window.clearTimeout(bootTimer)
       hls?.destroy()
       video.removeAttribute('src')
       video.load()
@@ -92,8 +173,10 @@ export function Player({ episode, resumeAt, onTime, onEnded }: Props) {
   const toggle = () => {
     const video = videoRef.current
     if (!video) return
-    if (video.paused) void video.play().catch(() => setError('这一段暂时安静了，换一段试试。'))
-    else video.pause()
+    if (video.paused) {
+      setBlocked(false)
+      void video.play().catch(() => setBlocked(true))
+    } else video.pause()
   }
 
   const seek = (value: number) => {
@@ -111,16 +194,41 @@ export function Player({ episode, resumeAt, onTime, onEnded }: Props) {
     else void stage.requestFullscreen().catch(() => undefined)
   }
 
+  const finish = () => {
+    if (finished.current) return
+    finished.current = true
+    onEndedRef.current()
+  }
+
+  const message = error || notice
+  const showLoading = !message && !blocked && !played.current
+  const showBuffering = !message && !blocked && buffering && played.current
+  const showPlay = !message && !showBuffering && (blocked || (played.current && !playing))
+
   return (
     <div className="stage" ref={stageRef}>
       <video
         ref={videoRef}
         playsInline
-        preload="metadata"
-        onPlay={() => setPlaying(true)}
+        preload="auto"
+        onPlay={() => {
+          played.current = true
+          setPlaying(true)
+          setBuffering(false)
+          setBlocked(false)
+        }}
         onPause={() => setPlaying(false)}
+        onWaiting={() => {
+          if (played.current) setBuffering(true)
+        }}
+        onPlaying={() => {
+          played.current = true
+          setPlaying(true)
+          setBuffering(false)
+        }}
         onTimeUpdate={(event) => {
-          const time = event.currentTarget.currentTime
+          const video = event.currentTarget
+          const time = video.currentTime
           setCurrent(time)
           onTime(time)
         }}
@@ -132,15 +240,43 @@ export function Player({ episode, resumeAt, onTime, onEnded }: Props) {
             resumed.current = true
           }
         }}
-        onEnded={onEnded}
+        onSeeked={() => {
+          if (resumed.current) resumed.current = false
+        }}
+        onProgress={(event) => {
+          const video = event.currentTarget
+          if (resumed.current || booted.current) return
+          if (bufferedAhead(video) < 8) return
+          booted.current = true
+          void video.play().catch(() => setBlocked(true))
+        }}
+        onCanPlay={(event) => {
+          const video = event.currentTarget
+          if (resumed.current || booted.current) return
+          if (bufferedAhead(video) < 8 && video.readyState < 4) return
+          booted.current = true
+          void video.play().catch(() => setBlocked(true))
+        }}
+        onEnded={finish}
         onError={() => {
-          if (episode.url) setError('画面没有回应。换一段，或稍后再来。')
+          if (episode.url) setError('画面没有回应。换一条线路，或稍后再来。')
         }}
         onClick={toggle}
       />
-      {error ? <div className="stage-error">{error}</div> : null}
-      {!episode.url && !error ? <div className="stage-error">正在把画面请过来…</div> : null}
-      {!playing && !error && episode.url ? (
+      {message ? <div className="stage-error">{message}</div> : null}
+      {showLoading ? (
+        <div className="stage-loading" role="status">
+          <span className="stage-spin" />
+          <span>正在加载中…</span>
+        </div>
+      ) : null}
+      {showBuffering ? (
+        <div className="stage-loading" role="status">
+          <span className="stage-spin" />
+          <span>正在缓冲…</span>
+        </div>
+      ) : null}
+      {showPlay ? (
         <button type="button" className="stage-center" onClick={toggle} aria-label="播放">
           ▶
         </button>

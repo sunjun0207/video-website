@@ -61,6 +61,30 @@ export function clearSearchHistory() {
   writeJson(KEYS.searchHistory, [])
 }
 
+const SEARCH_ANCHOR = 'video_website_search_anchor'
+
+export function setSearchAnchor(q: string, id: string) {
+  const query = q.trim()
+  if (!query || !id) return
+  try {
+    sessionStorage.setItem(SEARCH_ANCHOR, JSON.stringify({ q: query, id }))
+  } catch {
+    /* 这台浏览器没开会话存储时，返回搜索就停在列表顶部 */
+  }
+}
+
+export function searchAnchor(q: string): string {
+  try {
+    const raw = sessionStorage.getItem(SEARCH_ANCHOR)
+    if (!raw) return ''
+    const data = JSON.parse(raw) as { q?: string; id?: string }
+    if (!data.id || data.q !== q.trim()) return ''
+    return data.id
+  } catch {
+    return ''
+  }
+}
+
 export function getFavorites(): ShelfRecord[] {
   return readJson<ShelfRecord[]>(KEYS.favorites, [])
 }
