@@ -1,0 +1,22 @@
+# SSL_ENABLED=true 时使用:80 端口只做 → 443 跳转,并保留 certbot webroot 验证路径
+server {
+    listen      80;
+    listen      [::]:80;
+    server_name ${SERVER_NAME};
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 'ok';
+    }
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+    }
+
+    # HTTPS_REDIRECT_PORT 默认空(443);本地把 443 映射到 8444 时设为 ":8444"
+    location / {
+        return 301 https://$host${HTTPS_REDIRECT_PORT}$request_uri;
+    }
+}

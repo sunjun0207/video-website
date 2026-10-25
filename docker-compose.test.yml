@@ -1,0 +1,38 @@
+# video-website 测试环境：用 .env.test 构建。
+# 构建: npm run docker:test:build
+# 启动: npm run docker:test:up
+# 证书: docker/test/ssl/fullchain.pem + privkey.pem
+# 默认端口 8190/8553。
+
+name: video-website-test
+
+services:
+  video-website:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_MODE: test
+        NPM_REGISTRY: https://registry.npmmirror.com
+        ALPINE_APK_REPO_MIRROR: https://mirrors.aliyun.com
+    image: video-website:test
+    container_name: video-website-test
+    restart: unless-stopped
+    env_file:
+      - .env.test
+    environment:
+      TZ: Asia/Shanghai
+      SSL_ENABLED: 'true'
+      SERVER_NAME: ${SERVER_NAME:-_}
+    ports:
+      - '${HTTP_PORT:-8190}:80'
+      - '${HTTPS_PORT:-8553}:443'
+    volumes:
+      - ./docker/test/ssl/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
+      - ./docker/test/ssl/privkey.pem:/etc/nginx/ssl/privkey.pem:ro
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1/healthz']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

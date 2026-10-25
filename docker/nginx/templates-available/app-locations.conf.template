@@ -1,0 +1,122 @@
+# 由 10-video-website-select-templates.sh 在容器启动时用 envsubst 渲染到 /etc/nginx/snippets/app-locations.conf,
+# 再被 http / https 两个 server 模板 include。
+#
+# ${VITE_*_TARGET} 来自 compose env_file 加载的 .env.local / .env.dev / .env.pro,
+# 与 vite.config.ts 的 server.proxy 使用同一份目标地址。
+# 只有白名单变量会被替换,nginx 自身的 $uri / $host 等不受影响。
+
+root  /usr/share/nginx/html;
+index index.html;
+
+proxy_connect_timeout 10s;
+proxy_send_timeout    30s;
+proxy_read_timeout    60s;
+
+# 固定上游也用变量 + 公共 DNS。Docker 内置 DNS 在启动瞬间解析失败时,nginx 会直接退出。
+resolver 223.5.5.5 119.29.29.29 valid=300s ipv6=off;
+resolver_timeout 5s;
+
+location = /healthz {
+    access_log off;
+    default_type text/plain;
+    return 200 'ok';
+}
+
+location /assets/ {
+    expires 1y;
+    try_files $uri =404;
+}
+
+location / {
+    expires -1;
+    try_files $uri $uri/ /index.html;
+}
+
+# 片库页面。浏览器校验 Cookie 要原样带给上游,所以不 include proxy-common.conf。
+location /api-video-pomelo7-server/vod/ {
+    set $vod_backend ${VITE_VOD_TARGET};
+    rewrite ^/api-video-pomelo7-server/vod/?(.*)$ /$1 break;
+    proxy_pass $vod_backend$uri$is_args$args;
+    proxy_http_version 1.1;
+    proxy_ssl_server_name on;
+    proxy_ssl_protocols TLSv1.2 TLSv1.3;
+    proxy_ssl_verify off;
+    proxy_set_header Host $proxy_host;
+    proxy_set_header Connection "";
+    proxy_set_header Accept-Encoding "";
+    proxy_set_header Referer "https://www.dushe05.com/";
+    proxy_set_header User-Agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    proxy_set_header Cookie $http_cookie;
+    proxy_hide_header Set-Cookie;
+    proxy_hide_header Access-Control-Allow-Origin;
+}
+
+# img-a / img-b 必须写在 /img/ 前面没有关系:nginx 按最长前缀匹配,/img/ 匹配不到 /img-a/。
+location /api-video-pomelo7-server/img-a/ {
+    set $img_a_backend ${VITE_IMG_A_TARGET};
+    rewrite ^/api-video-pomelo7-server/img-a/?(.*)$ /$1 break;
+    proxy_pass $img_a_backend$uri$is_args$args;
+    include /etc/nginx/snippets/proxy-common.conf;
+    expires 1d;
+}
+
+location /api-video-pomelo7-server/img-b/ {
+    set $img_b_backend ${VITE_IMG_B_TARGET};
+    rewrite ^/api-video-pomelo7-server/img-b/?(.*)$ /$1 break;
+    proxy_pass $img_b_backend$uri$is_args$args;
+    include /etc/nginx/snippets/proxy-common.conf;
+    expires 1d;
+}
+
+location /api-video-pomelo7-server/img/ {
+    set $img_backend ${VITE_IMG_TARGET};
+    rewrite ^/api-video-pomelo7-server/img/?(.*)$ /$1 break;
+    proxy_pass $img_backend$uri$is_args$args;
+    include /etc/nginx/snippets/proxy-common.conf;
+    expires 1d;
+}
+
+# 播放主机不固定。路径: /play/{http|https}/{主机}/{端口}/原始路径
+# 上游跳转改写回本站前缀,浏览器不直连片源。
+location ~* ^/api-video-pomelo7-server/play/(?<play_scheme>https?)/(?<play_host>[^/]+)/(?<play_port>\d+)(?<play_path>/.*)$ {
+    resolver 223.5.5.5 119.29.29.29 valid=300s ipv6=off;
+    resolver_timeout 5s;
+    if ($play_host ~* "^(127\.|10\.|0\.|192\.168\.|169\.254\.|localhost)") {
+        return 403;
+    }
+    if ($play_host ~* "^172\.(1[6-9]|2[0-9]|3[0-1])\.") {
+        return 403;
+    }
+    set $play_backend $play_scheme://$play_host:$play_port;
+    set $play_host_header $play_host:$play_port;
+    if ($play_port = 80) {
+        set $play_host_header $play_host;
+    }
+    if ($play_port = 443) {
+        set $play_host_header $play_host;
+    }
+    proxy_pass $play_backend$play_path$is_args$args;
+    proxy_http_version 1.1;
+    proxy_ssl_server_name on;
+    proxy_ssl_name $play_host;
+    proxy_ssl_verify off;
+    proxy_set_header Host $play_host_header;
+    proxy_set_header Connection "";
+    proxy_set_header Cookie "";
+    proxy_set_header Referer "https://www.dushe05.com/";
+    proxy_set_header User-Agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    proxy_set_header Accept-Encoding "";
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_read_timeout 300s;
+    proxy_redirect ~*^https://([^/:]+):(\d+)(/.*)$ /api-video-pomelo7-server/play/https/$1/$2$3;
+    proxy_redirect ~*^http://([^/:]+):(\d+)(/.*)$ /api-video-pomelo7-server/play/http/$1/$2$3;
+    proxy_redirect ~*^https://([^/:]+)(/.*)$ /api-video-pomelo7-server/play/https/$1/443$2;
+    proxy_redirect ~*^http://([^/:]+)(/.*)$ /api-video-pomelo7-server/play/http/$1/80$2;
+    proxy_redirect / /api-video-pomelo7-server/play/$play_scheme/$play_host/$play_port/;
+}
+
+location /api-video-pomelo7-server/ {
+    default_type text/plain;
+    return 404;
+}

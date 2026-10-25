@@ -1,0 +1,39 @@
+# video-website 生产：用 .env.pro 构建。
+# 构建: npm run docker:pro:build
+# 启动: npm run docker:pro:up
+# 证书: docker/pro/ssl/fullchain.pem + privkey.pem
+# 域名: SERVER_NAME=video.example.com
+# 与音乐官网、video-h5 同时部署时，用 HTTP_PORT / HTTPS_PORT 错开 80/443。
+
+name: video-website-pro
+
+services:
+  video-website:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_MODE: pro
+        NPM_REGISTRY: https://registry.npmmirror.com
+        ALPINE_APK_REPO_MIRROR: https://mirrors.aliyun.com
+    image: video-website:pro
+    container_name: video-website
+    restart: unless-stopped
+    env_file:
+      - .env.pro
+    environment:
+      TZ: Asia/Shanghai
+      SSL_ENABLED: 'true'
+      SERVER_NAME: ${SERVER_NAME:-_}
+    ports:
+      - '${HTTP_PORT:-80}:80'
+      - '${HTTPS_PORT:-443}:443'
+    volumes:
+      - ./docker/pro/ssl/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
+      - ./docker/pro/ssl/privkey.pem:/etc/nginx/ssl/privkey.pem:ro
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1/healthz']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

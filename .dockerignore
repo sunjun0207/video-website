@@ -1,0 +1,16 @@
+node_modules
+dist
+.git
+.gitignore
+.DS_Store
+.vscode
+.idea
+.cursor
+npm-debug.log*
+
+# 个人覆盖的 env 不进镜像。.env.local / .env.dev / .env.test / .env.pro 必须保留。
+.env
+.env.*.local
+
+docker/*/ssl
+docker/*/certbot-www

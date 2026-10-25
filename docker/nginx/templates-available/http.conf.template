@@ -1,0 +1,8 @@
+# SSL_ENABLED=false 时使用:纯 HTTP 托管
+server {
+    listen      80;
+    listen      [::]:80;
+    server_name ${SERVER_NAME};
+
+    include /etc/nginx/snippets/app-locations.conf;
+}

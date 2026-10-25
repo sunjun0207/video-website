@@ -1,0 +1,38 @@
+# video-website 开发服务器：用 .env.dev 构建。
+# 构建: npm run docker:dev:build
+# 启动: npm run docker:dev:up
+# 证书: docker/dev/ssl/fullchain.pem + privkey.pem
+# 默认同机端口 8180/8543，避开 fmusic-website 的 8080/8443。
+
+name: video-website-dev
+
+services:
+  video-website:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_MODE: dev
+        NPM_REGISTRY: https://registry.npmmirror.com
+        ALPINE_APK_REPO_MIRROR: https://mirrors.aliyun.com
+    image: video-website:dev
+    container_name: video-website-dev
+    restart: unless-stopped
+    env_file:
+      - .env.dev
+    environment:
+      TZ: Asia/Shanghai
+      SSL_ENABLED: 'true'
+      SERVER_NAME: ${SERVER_NAME:-_}
+    ports:
+      - '${HTTP_PORT:-8180}:80'
+      - '${HTTPS_PORT:-8543}:443'
+    volumes:
+      - ./docker/dev/ssl/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
+      - ./docker/dev/ssl/privkey.pem:/etc/nginx/ssl/privkey.pem:ro
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1/healthz']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

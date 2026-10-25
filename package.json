@@ -1,0 +1,41 @@
+{
+  "name": "video-website",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:dev": "vite --mode dev",
+    "dev:test": "vite --mode test",
+    "dev:pro": "vite --mode pro",
+    "build": "npm run build:pro",
+    "build:dev": "tsc --noEmit && vite build --mode dev",
+    "build:test": "tsc --noEmit && vite build --mode test",
+    "build:pro": "tsc --noEmit && vite build --mode pro",
+    "preview": "vite preview --mode pro",
+    "docker:dev:build": "docker compose -f docker-compose.dev.yml build",
+    "docker:dev:up": "docker compose -f docker-compose.dev.yml up -d",
+    "docker:dev:down": "docker compose -f docker-compose.dev.yml down",
+    "docker:dev:logs": "docker compose -f docker-compose.dev.yml logs -f video-website",
+    "docker:test:build": "docker compose -f docker-compose.test.yml build",
+    "docker:test:up": "docker compose -f docker-compose.test.yml up -d",
+    "docker:test:down": "docker compose -f docker-compose.test.yml down",
+    "docker:test:logs": "docker compose -f docker-compose.test.yml logs -f video-website",
+    "docker:pro:build": "docker compose -f docker-compose.pro.yml build",
+    "docker:pro:up": "docker compose -f docker-compose.pro.yml up -d",
+    "docker:pro:down": "docker compose -f docker-compose.pro.yml down",
+    "docker:pro:logs": "docker compose -f docker-compose.pro.yml logs -f video-website"
+  },
+  "dependencies": {
+    "hls.js": "^1.7.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.0"
+  }
+}

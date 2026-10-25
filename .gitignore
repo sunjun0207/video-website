@@ -1,0 +1,15 @@
+node_modules
+dist
+.DS_Store
+.vscode
+.idea
+
+# 个人覆盖。共享的 .env.local / .env.dev / .env.test / .env.pro 需要提交。
+.env.*.local
+.env
+
+# 证书不进仓库。fullchain.pem / privkey.pem 放 docker/{dev,test,pro}/ssl/，只提交 .gitkeep
+docker/*/ssl/*.pem
+docker/*/ssl/*.key
+docker/*/ssl/*.crt
+docker/*/certbot-www
