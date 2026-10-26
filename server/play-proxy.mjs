@@ -5,8 +5,8 @@ const PLAY = /^\/api-video-pomelo7-server\/play\/(https?)\/([^/]+)\/(\d+)(\/.*)$
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 const agents = {
-  http: new http.Agent({ keepAlive: true, maxSockets: 8, maxFreeSockets: 4 }),
-  https: new https.Agent({ keepAlive: true, maxSockets: 8, maxFreeSockets: 4, rejectUnauthorized: false }),
+  http: new http.Agent({ keepAlive: true, maxSockets: 32, maxFreeSockets: 8 }),
+  https: new https.Agent({ keepAlive: true, maxSockets: 32, maxFreeSockets: 8, rejectUnauthorized: false }),
 }
 
 function blocked(host) {
