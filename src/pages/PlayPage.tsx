@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { LoadingPane } from '../components/LoadingPane'
 import { Player } from '../components/Player'
 import { PosterGrid } from '../components/PosterGrid'
 import { channelName, getVideo, relatedVideos } from '../lib/api'
+import { friendlyError } from '../lib/friendlyError'
 import { ensurePlayUrl } from '../lib/source'
 import { historyOf, rememberPlay } from '../lib/storage'
 import type { VideoItem } from '../lib/types'
@@ -40,7 +42,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
         setReadyKey(requestKey)
       })
       .catch((reason: unknown) => {
-        if (live) setError(reason instanceof Error ? reason.message : '这一段还没到来')
+        if (live) setError(friendlyError(reason, '这一段还没到来。'))
       })
     return () => {
       live = false
@@ -54,7 +56,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
   }, [item, index, onLibraryChange, resumeAt])
 
   if (error && !item) return <p className="note">{error}</p>
-  if (!item || !episode) return <p className="note">正在加载中…</p>
+  if (!item || !episode) return <LoadingPane kind="play" title="正在加载中…" />
 
   const remember = (time: number) => {
     const now = Date.now()

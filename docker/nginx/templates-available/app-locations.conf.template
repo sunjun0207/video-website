@@ -33,10 +33,12 @@ location / {
 }
 
 # 片库页面。浏览器校验 Cookie 要原样带给上游,所以不 include proxy-common.conf。
+# js_header_filter 只把校验状态 850 改成 200,仍由本 location 直连片库。
 location /api-video-pomelo7-server/vod/ {
     set $vod_backend ${VITE_VOD_TARGET};
     rewrite ^/api-video-pomelo7-server/vod/?(.*)$ /$1 break;
     proxy_pass $vod_backend$uri$is_args$args;
+    js_header_filter vod.rewriteStatus;
     proxy_http_version 1.1;
     proxy_ssl_server_name on;
     proxy_ssl_protocols TLSv1.2 TLSv1.3;
@@ -49,6 +51,9 @@ location /api-video-pomelo7-server/vod/ {
     proxy_set_header Cookie $http_cookie;
     proxy_hide_header Set-Cookie;
     proxy_hide_header Access-Control-Allow-Origin;
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "*" always;
 }
 
 # img-a / img-b 必须写在 /img/ 前面没有关系:nginx 按最长前缀匹配,/img/ 匹配不到 /img-a/。
@@ -114,6 +119,10 @@ location ~* ^/api-video-pomelo7-server/play/(?<play_scheme>https?)/(?<play_host>
     proxy_redirect ~*^https://([^/:]+)(/.*)$ /api-video-pomelo7-server/play/https/$1/443$2;
     proxy_redirect ~*^http://([^/:]+)(/.*)$ /api-video-pomelo7-server/play/http/$1/80$2;
     proxy_redirect / /api-video-pomelo7-server/play/$play_scheme/$play_host/$play_port/;
+    proxy_hide_header Access-Control-Allow-Origin;
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "*" always;
 }
 
 location /api-video-pomelo7-server/ {

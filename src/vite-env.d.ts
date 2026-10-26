@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly VITE_BASE: string
   readonly VITE_SOURCEMAP: string
   readonly VITE_DEV_PORT: string
+  /** true 封面和播放也走本站代理。false 时封面和播放直连片源。片库页面始终走 /vod。 */
+  readonly VITE_USE_PROXY: string
 }
 
 interface ImportMeta {

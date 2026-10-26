@@ -127,7 +127,8 @@ export function SiteHeader({ route }: { route: Route }) {
                 </li>
               )}
               {typed && pending && suggests.length === 0 ? (
-                <li className="suggest-label">
+                <li className="suggest-label suggest-pending">
+                  <span className="spin" />
                   <span>正在联想…</span>
                 </li>
               ) : null}
