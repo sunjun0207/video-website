@@ -17,6 +17,13 @@ export default defineConfig(({ mode }) => {
     secure: false,
     rewrite: (path) => path.replace(new RegExp(`^${prefix}`), ''),
     headers: PAGE_HEADERS,
+    configure(proxy) {
+      proxy.on('proxyRes', (proxyRes) => {
+        proxyRes.headers['access-control-allow-origin'] = '*'
+        proxyRes.headers['access-control-allow-methods'] = 'GET, HEAD, OPTIONS'
+        proxyRes.headers['access-control-allow-headers'] = '*'
+      })
+    },
   })
   const proxy: Record<string, ProxyOptions> = {
     '/api-video-pomelo7-server/vod': proxyRule('/api-video-pomelo7-server/vod', env.VITE_VOD_TARGET),

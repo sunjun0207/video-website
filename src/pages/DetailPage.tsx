@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import { LoadingPane } from '../components/LoadingPane'
 import { PosterGrid } from '../components/PosterGrid'
 import { PosterFace } from '../components/Poster'
 import { channelName, getVideo, metaLine, relatedVideos } from '../lib/api'
+import { friendlyError } from '../lib/friendlyError'
 import { ensureDetail } from '../lib/source'
 import { historyOf, isFavorite, toggleFavorite } from '../lib/storage'
 import type { VideoItem } from '../lib/types'
@@ -19,7 +21,7 @@ export function DetailPage({ id, libraryVersion, onLibraryChange }: { id: string
         if (live) setItem(video)
       })
       .catch((reason: unknown) => {
-        if (live) setError(reason instanceof Error ? reason.message : '没有找到这部片子')
+        if (live) setError(friendlyError(reason, '没有找到这部片子。'))
       })
     return () => {
       live = false
@@ -27,7 +29,7 @@ export function DetailPage({ id, libraryVersion, onLibraryChange }: { id: string
   }, [id])
 
   if (error) return <p className="note">{error}</p>
-  if (!item) return <p className="note">故事还在路上…</p>
+  if (!item) return <LoadingPane kind="detail" title="故事还在路上…" />
   const saved = isFavorite(item.id)
   const history = historyOf(item.id)
   const resumeEp = history?.ep ?? 0

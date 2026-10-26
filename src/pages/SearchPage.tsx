@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { LoadingPane } from '../components/LoadingPane'
 import { PosterGrid } from '../components/PosterGrid'
 import { searchHash } from '../lib/route'
 import { useLiveSuggest } from '../lib/suggest'
+import { friendlyError } from '../lib/friendlyError'
 import { cachedSearch, searchRemote } from '../lib/source'
 import { addSearchHistory, getSearchHistory, searchAnchor, setSearchAnchor } from '../lib/storage'
 import type { VideoItem } from '../lib/types'
@@ -36,7 +38,7 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
         if (live) setItems(list)
       })
       .catch((reason: unknown) => {
-        if (live && !known) setError(reason instanceof Error ? reason.message : '搜索暂时没有回应')
+        if (live && !known) setError(friendlyError(reason, '搜索这会儿没有回应，过一会儿再试。'))
       })
     return () => {
       live = false
@@ -101,7 +103,8 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
           {panelOpen ? (
             <ul className="suggest-list" role="listbox">
               {pending && suggests.length === 0 ? (
-                <li className="suggest-label">
+                <li className="suggest-label suggest-pending">
+                  <span className="spin" />
                   <span>正在联想…</span>
                 </li>
               ) : null}
@@ -129,7 +132,7 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
       {q.trim() ? (
         <section ref={gridRef}>
           {error ? <p className="note">{error}</p> : null}
-          {items === null && !error ? <p className="note">正在片库里找「{q}」…</p> : null}
+          {items === null && !error ? <LoadingPane kind="search" title={`正在片库里找「${q}」…`} /> : null}
           {items && items.length === 0 ? <p className="note">没有找到和「{q}」有关的片子。</p> : null}
           {items && items.length > 0 ? (
             <PosterGrid

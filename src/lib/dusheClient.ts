@@ -80,9 +80,17 @@ function solveChallenge(html: string): string {
   return ''
 }
 
+async function fetchSource(url: string, init: RequestInit | undefined, fallback: string): Promise<Response> {
+  try {
+    return await fetch(url, init)
+  } catch {
+    throw new Error(fallback)
+  }
+}
+
 async function ensureCookie(): Promise<void> {
   if (cookieAt && Date.now() - cookieAt < 8 * 60 * 1000) return
-  const response = await fetch(vodUrl('/'), { credentials: 'same-origin' })
+  const response = await fetchSource(vodUrl('/'), { credentials: 'same-origin' }, '片库这会儿没有连上。')
   const html = await response.text()
   if (response.status === 200 && html.includes('/detail/')) {
     cookieAt = Date.now()
@@ -92,14 +100,14 @@ async function ensureCookie(): Promise<void> {
   }
   const solved = solveChallenge(html)
   if (!solved) throw new Error('片库暂时没有打开')
-  document.cookie = `cdndefend_js_cookie=${solved}; path=${'/api-video-pomelo7-server/vod'}`
+  document.cookie = 'cdndefend_js_cookie=' + solved + '; path=/api-video-pomelo7-server/vod'
   cookieAt = Date.now()
 }
 
 async function fetchHtml(path: string): Promise<string> {
   await ensureCookie()
   const read = async () => {
-    const response = await fetch(vodUrl(path), { credentials: 'same-origin' })
+    const response = await fetchSource(vodUrl(path), { credentials: 'same-origin' }, '片库这会儿没有连上。')
     const html = await response.text()
     return { response, html }
   }
@@ -359,7 +367,7 @@ function chooseVariant(text: string, playlistUrl: string): string {
 }
 
 async function readPlaylist(upstream: string): Promise<{ text: string; url: string }> {
-  const response = await fetch(playProxy(upstream), { signal: AbortSignal.timeout(7000) })
+  const response = await fetchSource(playProxy(upstream), { signal: AbortSignal.timeout(7000) }, '这一段暂时拿不到。')
   const text = await response.text()
   if (!response.ok || !text.includes('#EXTM3U')) throw new Error('播放列表无效')
   return { text, url: upstreamFromPlay(response.url) || upstream }
@@ -376,7 +384,7 @@ async function readLimited(
   url: string,
   ms: number,
 ): Promise<{ bytes: Uint8Array; aborted: boolean; size: number; headerSize: number }> {
-  const response = await fetch(url)
+  const response = await fetchSource(url, undefined, '这一段暂时拿不到。')
   if (!response.ok || !response.body) throw new Error('片段没有回应')
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []

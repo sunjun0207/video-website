@@ -22,8 +22,20 @@ function playPath(target) {
   return `/api-video-pomelo7-server/play/${scheme}/${target.hostname}/${port}${target.pathname}${target.search}`
 }
 
+const CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, HEAD, OPTIONS',
+  'access-control-allow-headers': '*',
+  'access-control-max-age': '86400',
+}
+
 function playProxy(req, res, next) {
   const raw = req.url || ''
+  if (raw.startsWith('/api-video-pomelo7-server/') && req.method === 'OPTIONS') {
+    res.writeHead(204, CORS)
+    res.end()
+    return
+  }
   const queryAt = raw.indexOf('?')
   const path = queryAt >= 0 ? raw.slice(0, queryAt) : raw
   const search = queryAt >= 0 ? raw.slice(queryAt) : ''
@@ -66,14 +78,15 @@ function playProxy(req, res, next) {
       const location = incoming.headers.location
       if (incoming.statusCode && incoming.statusCode >= 300 && incoming.statusCode < 400 && location) {
         const nextUrl = new URL(location, `${scheme}://${host}:${port}${upstreamPath}`)
-        res.statusCode = incoming.statusCode
-        res.setHeader('Location', playPath(nextUrl))
+        res.writeHead(incoming.statusCode, { ...CORS, Location: playPath(nextUrl) })
         incoming.resume()
         res.end()
         return
       }
-      const out = { ...incoming.headers }
+      const out = { ...incoming.headers, ...CORS }
       delete out['set-cookie']
+      delete out['access-control-allow-origin']
+      out['access-control-allow-origin'] = '*'
       res.writeHead(incoming.statusCode || 502, out)
       incoming.pipe(res)
       res.on('close', () => incoming.destroy())

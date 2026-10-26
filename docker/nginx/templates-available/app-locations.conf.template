@@ -49,6 +49,9 @@ location /api-video-pomelo7-server/vod/ {
     proxy_set_header Cookie $http_cookie;
     proxy_hide_header Set-Cookie;
     proxy_hide_header Access-Control-Allow-Origin;
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "*" always;
 }
 
 # img-a / img-b 必须写在 /img/ 前面没有关系:nginx 按最长前缀匹配,/img/ 匹配不到 /img-a/。
@@ -114,6 +117,10 @@ location ~* ^/api-video-pomelo7-server/play/(?<play_scheme>https?)/(?<play_host>
     proxy_redirect ~*^https://([^/:]+)(/.*)$ /api-video-pomelo7-server/play/https/$1/443$2;
     proxy_redirect ~*^http://([^/:]+)(/.*)$ /api-video-pomelo7-server/play/http/$1/80$2;
     proxy_redirect / /api-video-pomelo7-server/play/$play_scheme/$play_host/$play_port/;
+    proxy_hide_header Access-Control-Allow-Origin;
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "*" always;
 }
 
 location /api-video-pomelo7-server/ {
