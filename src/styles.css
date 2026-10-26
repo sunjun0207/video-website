@@ -575,6 +575,11 @@ a {
 
 .btn:hover { background: var(--teal-deep); }
 
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .btn-light {
   background: #fff;
   color: var(--ink);
@@ -1247,7 +1252,7 @@ a {
   right: 0;
   bottom: 0;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
   gap: 10px;
   align-items: center;
   padding: 10px 12px;
@@ -1261,6 +1266,15 @@ a {
   color: #fff;
 }
 
+.controls button:disabled {
+  opacity: 0.45;
+}
+
+.controls .control-download {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .controls input[type='range'] {
   width: 100%;
   accent-color: var(--teal-glow);
@@ -1272,6 +1286,18 @@ a {
 }
 
 .play-copy h1 { margin-top: 16px; }
+.play-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+}
+.download-status {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
 .line-chips { margin-top: 12px; }
 
 .play-side {

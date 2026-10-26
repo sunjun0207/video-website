@@ -4,6 +4,7 @@ import { Player } from '../components/Player'
 import { PosterGrid } from '../components/PosterGrid'
 import { channelName, getVideo, relatedVideos } from '../lib/api'
 import { friendlyError } from '../lib/friendlyError'
+import { DownloadCancelled, downloadFilename, downloadMedia, qualityFromLine, type DownloadGate } from '../lib/downloadMedia'
 import { ensurePlayUrl } from '../lib/source'
 import { historyOf, rememberPlay } from '../lib/storage'
 import type { VideoItem } from '../lib/types'
@@ -14,7 +15,12 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
   const [readyKey, setReadyKey] = useState('')
   const [lineName, setLineName] = useState('')
   const [error, setError] = useState('')
+  const [downloadPercent, setDownloadPercent] = useState<number | null>(null)
+  const [downloadPaused, setDownloadPaused] = useState(false)
+  const [downloadError, setDownloadError] = useState('')
   const [pick, setPick] = useState<{ id: string; ep: number; path: string } | null>(null)
+  const downloadAbort = useRef<AbortController | null>(null)
+  const downloadGate = useRef<DownloadGate | null>(null)
   const savedAt = useRef(0)
   const advanced = useRef(false)
   const index = item && item.episodes.length ? Math.min(Math.max(ep, 0), item.episodes.length - 1) : Math.max(ep, 0)
@@ -28,6 +34,18 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
   useEffect(() => {
     advanced.current = false
   }, [id, index])
+
+  useEffect(() => {
+    setDownloadError('')
+    setDownloadPercent(null)
+    setDownloadPaused(false)
+    downloadGate.current = null
+    const current = downloadAbort
+    return () => {
+      current.current?.abort()
+      current.current = null
+    }
+  }, [requestKey])
 
   useEffect(() => {
     let live = true
@@ -73,6 +91,57 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
     window.location.hash = `#/play/${item.id}/${index + 1}`
   }
 
+  const toggleDownload = () => {
+    const gate = downloadGate.current
+    if (!gate) return
+    if (gate.paused) {
+      gate.resume()
+      setDownloadPaused(false)
+      return
+    }
+    gate.pause()
+    setDownloadPaused(true)
+  }
+
+  const startDownload = () => {
+    if (!activeUrl || downloadAbort.current) return
+    const controller = new AbortController()
+    downloadAbort.current = controller
+    downloadGate.current = null
+    setDownloadError('')
+    setDownloadPaused(false)
+    setDownloadPercent(0)
+    const episodeName = item.episodes.length > 1 && episode.title !== item.title ? episode.title : ''
+    const filename = downloadFilename(item.title, qualityFromLine(lineName), episodeName)
+    downloadMedia({
+      url: activeUrl,
+      filename,
+      signal: controller.signal,
+      onGate: (gate) => {
+        if (downloadAbort.current === controller) downloadGate.current = gate
+      },
+      onProgress: (percent) => {
+        if (downloadAbort.current === controller) setDownloadPercent(percent)
+      },
+    })
+      .then(() => {
+        if (downloadAbort.current !== controller) return
+        downloadAbort.current = null
+        downloadGate.current = null
+        setDownloadPaused(false)
+        setDownloadPercent(null)
+      })
+      .catch((reason: unknown) => {
+        if (downloadAbort.current !== controller) return
+        downloadAbort.current = null
+        downloadGate.current = null
+        setDownloadPaused(false)
+        setDownloadPercent(null)
+        if (controller.signal.aborted || reason instanceof DownloadCancelled) return
+        setDownloadError(friendlyError(reason, '这次没有下载下来。'))
+      })
+  }
+
   return (
     <>
       <p className="crumb">
@@ -88,6 +157,9 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
             episode={{ ...episode, url: activeUrl }}
             resumeAt={activeUrl ? resumeAt : 0}
             notice={error}
+            downloadLabel={downloadPercent === null ? '下载' : downloadPaused ? '继续下载' : '暂停'}
+            downloadDisabled={downloadPercent === null && !activeUrl}
+            onDownload={downloadPercent === null ? startDownload : toggleDownload}
             onTime={remember}
             onEnded={goNext}
           />
@@ -97,6 +169,21 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
               {channelName(item.channel)}
               {lineName ? ` · ${lineName}` : ''}
             </p>
+            <div className="play-actions">
+              {downloadPercent === null ? (
+                <button type="button" className="btn" disabled={!activeUrl} onClick={startDownload}>
+                  下载
+                </button>
+              ) : (
+                <>
+                  <span className="download-status">正在下载中，当前进度{downloadPercent}%</span>
+                  <button type="button" className="btn" onClick={toggleDownload}>
+                    {downloadPaused ? '继续下载' : '暂停'}
+                  </button>
+                </>
+              )}
+            </div>
+            {downloadError ? <p className="note">{downloadError}</p> : null}
           </div>
           {episode.lines && episode.lines.length > 1 ? (
             <div className="chips line-chips">
