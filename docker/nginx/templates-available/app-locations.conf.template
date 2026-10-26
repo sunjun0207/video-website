@@ -33,10 +33,12 @@ location / {
 }
 
 # 片库页面。浏览器校验 Cookie 要原样带给上游,所以不 include proxy-common.conf。
+# js_header_filter 只把校验状态 850 改成 200,仍由本 location 直连片库。
 location /api-video-pomelo7-server/vod/ {
     set $vod_backend ${VITE_VOD_TARGET};
     rewrite ^/api-video-pomelo7-server/vod/?(.*)$ /$1 break;
     proxy_pass $vod_backend$uri$is_args$args;
+    js_header_filter vod.rewriteStatus;
     proxy_http_version 1.1;
     proxy_ssl_server_name on;
     proxy_ssl_protocols TLSv1.2 TLSv1.3;

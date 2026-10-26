@@ -112,6 +112,7 @@ async function fetchHtml(path: string): Promise<string> {
     return { response, html }
   }
   let { response, html } = await read()
+  // 线上和开发代理会把 850 改写成 200,正文里仍有校验脚本。
   if (response.status === 850 || html.includes("cdndefend_js_cookie")) {
     cookieAt = 0
     document.cookie = 'cdndefend_js_cookie=; Max-Age=0; path=/api-video-pomelo7-server/vod'
