@@ -11,15 +11,24 @@ const PAGE_HEADERS = {
 /** 浏览器只请求 /api-video-pomelo7-server。开发代理与线上 nginx 使用同一组 *_TARGET。 */
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_')
-  const proxyRule = (prefix: string, target: string): ProxyOptions => ({
+  const proxyRule = (prefix: string, target: string, rewriteChallenge = false): ProxyOptions => ({
     target,
     changeOrigin: true,
     secure: false,
     rewrite: (path) => path.replace(new RegExp(`^${prefix}`), ''),
     headers: PAGE_HEADERS,
+    configure(proxy) {
+      proxy.on('proxyRes', (proxyRes) => {
+        // 片库校验是 850。改成 200 后，这次 fetch 不会出现在浏览器的失败列表里。
+        if (rewriteChallenge && proxyRes.statusCode === 850) proxyRes.statusCode = 200
+        proxyRes.headers['access-control-allow-origin'] = '*'
+        proxyRes.headers['access-control-allow-methods'] = 'GET, HEAD, OPTIONS'
+        proxyRes.headers['access-control-allow-headers'] = '*'
+      })
+    },
   })
   const proxy: Record<string, ProxyOptions> = {
-    '/api-video-pomelo7-server/vod': proxyRule('/api-video-pomelo7-server/vod', env.VITE_VOD_TARGET),
+    '/api-video-pomelo7-server/vod': proxyRule('/api-video-pomelo7-server/vod', env.VITE_VOD_TARGET, true),
     '/api-video-pomelo7-server/img-a': proxyRule('/api-video-pomelo7-server/img-a', env.VITE_IMG_A_TARGET),
     '/api-video-pomelo7-server/img-b': proxyRule('/api-video-pomelo7-server/img-b', env.VITE_IMG_B_TARGET),
     '/api-video-pomelo7-server/img': proxyRule('/api-video-pomelo7-server/img', env.VITE_IMG_TARGET),

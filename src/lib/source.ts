@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getVideo, setVideos, upsertVideo, videoCount } from './api'
 import { loadDetail, loadHome, loadPlay, loadSearch } from './dusheClient'
+import { friendlyError } from './friendlyError'
 import type { VideoItem } from './types'
 
 let loading: Promise<void> | null = null
@@ -92,7 +93,7 @@ export function useCatalog() {
         if (live) setReady(true)
       })
       .catch((reason: unknown) => {
-        if (live) setError(reason instanceof Error ? reason.message : '片库加载失败')
+        if (live) setError(friendlyError(reason, '片库这会儿没有连上。'))
       })
     return () => {
       live = false
