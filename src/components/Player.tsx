@@ -7,6 +7,9 @@ type Props = {
   episode: Episode
   resumeAt: number
   notice?: string
+  downloadLabel?: string
+  downloadDisabled?: boolean
+  onDownload?: () => void
   onTime: (time: number) => void
   onEnded: () => void
 }
@@ -37,7 +40,16 @@ const retryPolicy = {
   errorRetry: { maxNumRetry: 6, retryDelayMs: 800, maxRetryDelayMs: 8000 },
 }
 
-export function Player({ episode, resumeAt, notice = '', onTime, onEnded }: Props) {
+export function Player({
+  episode,
+  resumeAt,
+  notice = '',
+  downloadLabel = '下载',
+  downloadDisabled = false,
+  onDownload,
+  onTime,
+  onEnded,
+}: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
   const onEndedRef = useRef(onEnded)
@@ -299,6 +311,11 @@ export function Player({ episode, resumeAt, notice = '', onTime, onEnded }: Prop
         <button type="button" onClick={fullscreen} aria-label="全屏">
           全屏
         </button>
+        {onDownload ? (
+          <button type="button" className="control-download" disabled={downloadDisabled} onClick={onDownload}>
+            {downloadLabel}
+          </button>
+        ) : null}
       </div>
     </div>
   )

@@ -14,3 +14,24 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
+
+declare module 'mux.js' {
+  interface MuxSegment {
+    initSegment?: Uint8Array
+    data?: Uint8Array
+  }
+
+  interface MuxTransmuxer {
+    on(event: 'data', listener: (segment: MuxSegment) => void): void
+    push(data: Uint8Array): void
+    flush(): void
+  }
+
+  const muxjs: {
+    mp4: {
+      Transmuxer: new (options?: { keepOriginalTimestamps?: boolean }) => MuxTransmuxer
+    }
+  }
+
+  export default muxjs
+}
