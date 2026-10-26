@@ -1293,11 +1293,37 @@ a {
   align-items: center;
   margin-top: 14px;
 }
-.download-status {
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 500;
+.download-panel {
+  display: flex;
+  flex: 1 1 320px;
+  gap: 12px;
+  align-items: center;
+  min-width: min(100%, 280px);
 }
+.download-meter { flex: 1; min-width: 0; }
+.download-bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(26, 166, 160, 0.16);
+}
+.download-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+}
+.download-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.download-status strong { color: var(--teal-deep); }
 .line-chips { margin-top: 12px; }
 
 .play-side {

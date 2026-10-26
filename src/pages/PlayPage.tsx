@@ -4,10 +4,35 @@ import { Player } from '../components/Player'
 import { PosterGrid } from '../components/PosterGrid'
 import { channelName, getVideo, relatedVideos } from '../lib/api'
 import { friendlyError } from '../lib/friendlyError'
-import { DownloadCancelled, downloadFilename, downloadMedia, qualityFromLine, type DownloadGate } from '../lib/downloadMedia'
+import { DownloadCancelled, downloadFilename, downloadMedia, qualityFromLine, type DownloadGate, type DownloadProgress } from '../lib/downloadMedia'
 import { ensurePlayUrl } from '../lib/source'
 import { historyOf, rememberPlay } from '../lib/storage'
 import type { VideoItem } from '../lib/types'
+
+function formatSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  const digits = unit === 0 ? 0 : value >= 100 ? 0 : value >= 10 ? 1 : 2
+  return `${value.toFixed(digits)} ${units[unit]}`
+}
+
+function downloadSizeText(progress: DownloadProgress): string {
+  const received = formatSize(progress.received)
+  if (progress.total > 0) return `${received} / ${formatSize(progress.total)}`
+  return `已下载 ${received}`
+}
+
+function downloadSpeedText(progress: DownloadProgress, paused: boolean): string {
+  if (paused) return '已暂停'
+  if (progress.received <= 0 || progress.speed <= 0) return '正在连接…'
+  return `${formatSize(progress.speed)}/s`
+}
 
 export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; onLibraryChange: () => void }) {
   const [item, setItem] = useState<VideoItem | undefined>(() => getVideo(id))
@@ -15,7 +40,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
   const [readyKey, setReadyKey] = useState('')
   const [lineName, setLineName] = useState('')
   const [error, setError] = useState('')
-  const [downloadPercent, setDownloadPercent] = useState<number | null>(null)
+  const [download, setDownload] = useState<DownloadProgress | null>(null)
   const [downloadPaused, setDownloadPaused] = useState(false)
   const [downloadError, setDownloadError] = useState('')
   const [pick, setPick] = useState<{ id: string; ep: number; path: string } | null>(null)
@@ -37,7 +62,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
 
   useEffect(() => {
     setDownloadError('')
-    setDownloadPercent(null)
+    setDownload(null)
     setDownloadPaused(false)
     downloadGate.current = null
     const current = downloadAbort
@@ -110,7 +135,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
     downloadGate.current = null
     setDownloadError('')
     setDownloadPaused(false)
-    setDownloadPercent(0)
+    setDownload({ percent: 0, received: 0, total: 0, speed: 0 })
     const episodeName = item.episodes.length > 1 && episode.title !== item.title ? episode.title : ''
     const filename = downloadFilename(item.title, qualityFromLine(lineName), episodeName)
     downloadMedia({
@@ -120,8 +145,8 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
       onGate: (gate) => {
         if (downloadAbort.current === controller) downloadGate.current = gate
       },
-      onProgress: (percent) => {
-        if (downloadAbort.current === controller) setDownloadPercent(percent)
+      onProgress: (progress) => {
+        if (downloadAbort.current === controller) setDownload(progress)
       },
     })
       .then(() => {
@@ -129,14 +154,14 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
         downloadAbort.current = null
         downloadGate.current = null
         setDownloadPaused(false)
-        setDownloadPercent(null)
+        setDownload(null)
       })
       .catch((reason: unknown) => {
         if (downloadAbort.current !== controller) return
         downloadAbort.current = null
         downloadGate.current = null
         setDownloadPaused(false)
-        setDownloadPercent(null)
+        setDownload(null)
         if (controller.signal.aborted || reason instanceof DownloadCancelled) return
         setDownloadError(friendlyError(reason, '这次没有下载下来。'))
       })
@@ -157,9 +182,9 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
             episode={{ ...episode, url: activeUrl }}
             resumeAt={activeUrl ? resumeAt : 0}
             notice={error}
-            downloadLabel={downloadPercent === null ? '下载' : downloadPaused ? '继续下载' : '暂停'}
-            downloadDisabled={downloadPercent === null && !activeUrl}
-            onDownload={downloadPercent === null ? startDownload : toggleDownload}
+            downloadLabel={download === null ? '下载' : downloadPaused ? '继续下载' : `暂停 ${download.percent}%`}
+            downloadDisabled={download === null && !activeUrl}
+            onDownload={download === null ? startDownload : toggleDownload}
             onTime={remember}
             onEnded={goNext}
           />
@@ -170,17 +195,33 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
               {lineName ? ` · ${lineName}` : ''}
             </p>
             <div className="play-actions">
-              {downloadPercent === null ? (
+              {download === null ? (
                 <button type="button" className="btn" disabled={!activeUrl} onClick={startDownload}>
                   下载
                 </button>
               ) : (
-                <>
-                  <span className="download-status">正在下载中，当前进度{downloadPercent}%</span>
+                <div className="download-panel">
+                  <div className="download-meter">
+                    <div
+                      className="download-bar"
+                      role="progressbar"
+                      aria-valuenow={download.percent}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label="下载进度"
+                    >
+                      <span style={{ width: `${download.percent}%` }} />
+                    </div>
+                    <p className="download-status">
+                      <strong>{download.percent}%</strong>
+                      <span>{downloadSizeText(download)}</span>
+                      <span>{downloadSpeedText(download, downloadPaused)}</span>
+                    </p>
+                  </div>
                   <button type="button" className="btn" onClick={toggleDownload}>
                     {downloadPaused ? '继续下载' : '暂停'}
                   </button>
-                </>
+                </div>
               )}
             </div>
             {downloadError ? <p className="note">{downloadError}</p> : null}
