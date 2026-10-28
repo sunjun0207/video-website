@@ -4,7 +4,7 @@ import { PosterGrid } from '../components/PosterGrid'
 import { PosterFace } from '../components/Poster'
 import { channelName, getVideo, metaLine, relatedVideos } from '../lib/api'
 import { friendlyError } from '../lib/friendlyError'
-import { ensureDetail } from '../lib/source'
+import { ensureDetail, prefetchPlay } from '../lib/source'
 import { historyOf, isFavorite, toggleFavorite } from '../lib/storage'
 import type { VideoItem } from '../lib/types'
 
@@ -18,7 +18,9 @@ export function DetailPage({ id, libraryVersion, onLibraryChange }: { id: string
     setItem(getVideo(id))
     ensureDetail(id)
       .then((video) => {
-        if (live) setItem(video)
+        if (!live) return
+        setItem(video)
+        prefetchPlay(video.id, historyOf(video.id)?.ep ?? 0)
       })
       .catch((reason: unknown) => {
         if (live) setError(friendlyError(reason, '没有找到这部片子。'))

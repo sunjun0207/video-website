@@ -645,6 +645,7 @@ function createTsWriter(sink: Sink) {
 type WriteData = Uint8Array | { type: 'write'; position: number; data: Uint8Array }
 
 type SaveHandle = {
+  name: string
   createWritable: () => Promise<{
     write: (data: WriteData) => Promise<void>
     close: () => Promise<void>
@@ -657,9 +658,41 @@ type SavePicker = (options: {
   types?: { description?: string; accept: Record<string, string[]> }[]
 }) => Promise<SaveHandle>
 
+type OpenPicker = (options: { startIn?: SaveHandle }) => Promise<{ getFile: () => Promise<File> }[]>
+
+export type SavedFile = {
+  name: string
+  /** 用保存对话框选了位置才有。 */
+  handle?: SaveHandle
+}
+
 function savePicker(): SavePicker | null {
   const candidate = (window as Window & { showSaveFilePicker?: SavePicker }).showSaveFilePicker
   return candidate ? candidate.bind(window) : null
+}
+
+function openPicker(): OpenPicker | null {
+  const candidate = (window as Window & { showOpenFilePicker?: OpenPicker }).showOpenFilePicker
+  return candidate ? candidate.bind(window) : null
+}
+
+export function canReveal(file: SavedFile): boolean {
+  return Boolean(file.handle && openPicker())
+}
+
+/**
+ * 网页打不开资源管理器，只能弹出系统的打开文件窗口，让它停在保存这个文件的文件夹里。
+ * 在窗口里选中文件打开，就在新标签页里播放它。
+ */
+export async function revealSaved(file: SavedFile): Promise<void> {
+  const picker = openPicker()
+  if (!picker || !file.handle) return
+  try {
+    const [picked] = await picker({ startIn: file.handle })
+    if (picked) window.open(URL.createObjectURL(await picked.getFile()), '_blank', 'noopener')
+  } catch {
+    /* 关掉了窗口，或者浏览器拦下了新标签页 */
+  }
 }
 
 function serializeSink(sink: Sink): Sink {
@@ -679,16 +712,17 @@ function serializeSink(sink: Sink): Sink {
   }
 }
 
-async function openSink(filename: string, ext: string, mime: string): Promise<Sink> {
+async function openSink(filename: string, ext: string, mime: string): Promise<{ sink: Sink; saved: SavedFile }> {
+  const name = `${filename}.${ext}`
   const picker = savePicker()
   if (picker) {
     try {
       const handle = await picker({
-        suggestedName: `${filename}.${ext}`,
+        suggestedName: name,
         types: [{ description: '视频', accept: { [mime]: [`.${ext}`] } }],
       })
       const writable = await handle.createWritable()
-      return serializeSink({
+      const sink = serializeSink({
         write: async (data, position) => {
           if (position === undefined) await writable.write(data)
           else await writable.write({ type: 'write', position, data })
@@ -696,6 +730,7 @@ async function openSink(filename: string, ext: string, mime: string): Promise<Si
         close: () => writable.close(),
         abort: () => writable.abort(),
       })
+      return { sink, saved: { name: handle.name || name, handle } }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw new DownloadCancelled()
     }
@@ -703,7 +738,7 @@ async function openSink(filename: string, ext: string, mime: string): Promise<Si
   /** 按位置存：带位置的写要么落在新的位置，要么原样覆盖之前同一位置、同样长度的一块（比如回填文件头）。 */
   const stored = new Map<number, Uint8Array>()
   let cursor = 0
-  return serializeSink({
+  const sink = serializeSink({
     write: async (data, position) => {
       const at = position ?? cursor
       cursor = Math.max(cursor, at + data.byteLength)
@@ -717,7 +752,7 @@ async function openSink(filename: string, ext: string, mime: string): Promise<Si
       const href = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = href
-      link.download = `${filename}.${ext}`
+      link.download = name
       document.body.appendChild(link)
       link.click()
       link.remove()
@@ -727,6 +762,7 @@ async function openSink(filename: string, ext: string, mime: string): Promise<Si
       stored.clear()
     },
   })
+  return { sink, saved: { name } }
 }
 
 async function withSink(sink: Sink, task: () => Promise<void>) {
@@ -1239,7 +1275,7 @@ export async function downloadMedia(options: {
   onGate?: (gate: DownloadGate) => void
   /** 页面上正在用的播放器，边播边下时给它让带宽。 */
   media?: () => HTMLVideoElement | null
-}): Promise<void> {
+}): Promise<SavedFile> {
   const { url, filename, signal, onProgress, onGate, media } = options
   if (!url) throw new Error('还没有播放地址')
   const gate = createGate(media)
@@ -1247,7 +1283,7 @@ export async function downloadMedia(options: {
   const tracker = createTracker(onProgress)
   tracker.open()
   const file = outputFile(url)
-  const sink = await openSink(filename, file.ext, file.mime)
+  const { sink, saved } = await openSink(filename, file.ext, file.mime)
   await withSink(sink, async () => {
     if (url.includes('.m3u8')) {
       const parts = await mediaParts(url, signal)
@@ -1257,4 +1293,5 @@ export async function downloadMedia(options: {
     await downloadDirect(url, sink, signal, gate, tracker)
   })
   tracker.finish()
+  return saved
 }

@@ -7,8 +7,27 @@ export function videoCount(): number {
   return videos.length
 }
 
-export function setVideos(list: VideoItem[]): void {
-  videos = list
+/**
+ * 换上新抓到的片单。打开过详情的片子保留原对象，选集和已经探好的播放地址都还在；
+ * 不在新片单里的（比如搜出来的）也留着，只是不再算热度和焦点。
+ */
+export function replaceCatalog(fresh: VideoItem[]): void {
+  const known = new Map(videos.map((item) => [item.id, item]))
+  const ids = new Set(fresh.map((item) => item.id))
+  const next = fresh.map((item) => {
+    const prev = known.get(item.id)
+    if (!prev?.episodes.length) return item
+    prev.hot = item.hot
+    prev.featured = item.featured
+    return prev
+  })
+  for (const item of videos) {
+    if (ids.has(item.id)) continue
+    item.hot = 0
+    item.featured = false
+    next.push(item)
+  }
+  videos = next
 }
 
 export function upsertVideo(item: VideoItem): void {
@@ -68,6 +87,16 @@ export function suggestTitles(keyword: string, limit = 8): SuggestHit[] {
     if (hits.length >= limit) break
   }
   return hits
+}
+
+/** 片库里已有、片名或演职员对得上的片子。搜索结果回来之前先拿来垫着。 */
+export function localMatches(keyword: string, limit = 12): VideoItem[] {
+  const q = keyword.trim().toLowerCase()
+  if (!q) return []
+  return videos
+    .filter((item) => [item.title, item.director, ...item.actors].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => b.hot - a.hot)
+    .slice(0, limit)
 }
 
 export function hotVideos(limit = 10): VideoItem[] {
