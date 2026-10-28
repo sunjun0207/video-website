@@ -46,6 +46,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
   const [pick, setPick] = useState<{ id: string; ep: number; path: string } | null>(null)
   const downloadAbort = useRef<AbortController | null>(null)
   const downloadGate = useRef<DownloadGate | null>(null)
+  const mediaRef = useRef<HTMLVideoElement | null>(null)
   const savedAt = useRef(0)
   const advanced = useRef(false)
   const index = item && item.episodes.length ? Math.min(Math.max(ep, 0), item.episodes.length - 1) : Math.max(ep, 0)
@@ -142,6 +143,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
       url: activeUrl,
       filename,
       signal: controller.signal,
+      media: () => mediaRef.current,
       onGate: (gate) => {
         if (downloadAbort.current === controller) downloadGate.current = gate
       },
@@ -187,6 +189,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
             onDownload={download === null ? startDownload : toggleDownload}
             onTime={remember}
             onEnded={goNext}
+            mediaRef={mediaRef}
           />
           <div className="play-copy">
             <h1>{item.title}</h1>

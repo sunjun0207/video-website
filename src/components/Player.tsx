@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import Hls from 'hls.js'
 import { absolutePlayUrl, rewritePlaylist, upstreamFromPlay } from '../lib/mediaProxy'
 import type { Episode } from '../lib/types'
@@ -12,6 +12,8 @@ type Props = {
   onDownload?: () => void
   onTime: (time: number) => void
   onEnded: () => void
+  /** 传入时 video 元素挂在这个 ref 上，页面可以读播放状态。 */
+  mediaRef?: RefObject<HTMLVideoElement | null>
 }
 
 function bufferedAhead(video: HTMLVideoElement) {
@@ -49,8 +51,10 @@ export function Player({
   onDownload,
   onTime,
   onEnded,
+  mediaRef,
 }: Props) {
-  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const ownVideoRef = useRef<HTMLVideoElement | null>(null)
+  const videoRef = mediaRef ?? ownVideoRef
   const stageRef = useRef<HTMLDivElement | null>(null)
   const onEndedRef = useRef(onEnded)
   const resumed = useRef(false)

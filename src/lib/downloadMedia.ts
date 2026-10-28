@@ -1,5 +1,6 @@
-import muxjs from 'mux.js'
 import { absolutePlayUrl, rewritePlaylist, upstreamFromPlay } from './mediaProxy'
+import { createMp4Remuxer } from './mp4Remux'
+import { createTsDemuxer } from './tsDemux'
 
 /** 用户关掉保存对话框时抛出，页面上不记成失败。 */
 export class DownloadCancelled extends Error {
@@ -18,6 +19,8 @@ export type DownloadGate = {
 type Gate = DownloadGate & {
   checkpoint: (signal: AbortSignal) => Promise<void>
   fork: (signal: AbortSignal) => AbortSignal
+  /** 此刻最多能同时开几路连接。 */
+  room: () => number
 }
 
 export type DownloadProgress = {
@@ -30,9 +33,25 @@ export type DownloadProgress = {
 type Progress = (progress: DownloadProgress) => void
 
 /** 同时拉取的连接数，和常见多线程下载器的默认路数一致。 */
-const CONNECTIONS = 8
+/** 浏览器对同一站点最多同时开 6 路，多出来的请求只会在浏览器里排队，排久了还会被当成没回应。 */
+const CONNECTIONS = 6
 const MIN_PIECE = 1024 * 1024
 const TS_PACKET = 188
+/** 边播边下：播放器还缓冲着多少秒时，下载最多开几路。浏览器对同一站点只开 6 路，要给播放器留位置。 */
+const PLAYING_ROOM: [number, number][] = [
+  [18, 4],
+  [12, 2],
+  [6, 1],
+]
+/** 缓冲见底、播放和缓冲又都这么久没动，多半是播放器自己出错停了，下载不再干等，至少留一路。 */
+const STUCK_LIMIT = 30_000
+const PACE_POLL = 500
+/** 一个请求这么久一个字节都没收到，就当它卡住了，断开重试。 */
+const STALL_MS = 30_000
+/** 每个请求最多试这么多次，第 n 次失败后等 n 倍的 RETRY_DELAY 再试。 */
+const ATTEMPTS = 4
+const RETRY_DELAY = 2000
+const STALLED = '有一段视频一直没有回应，换一条线路，或稍后再来。'
 
 type Tracker = {
   open: () => void
@@ -128,6 +147,115 @@ function createWake() {
   }
 }
 
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'))
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      window.clearTimeout(timer)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** 盯住一次请求：拿到响应前、或者收数据途中停了 STALL_MS 没有动静，就中断它。run 每收到数据调一次 alive。 */
+async function watched<T>(signal: AbortSignal, run: (local: AbortSignal, alive: () => void) => Promise<T>): Promise<T> {
+  const local = new AbortController()
+  let stalled = false
+  let timer = 0
+  const alive = () => {
+    window.clearTimeout(timer)
+    timer = window.setTimeout(() => {
+      stalled = true
+      local.abort()
+    }, STALL_MS)
+  }
+  const onAbort = () => local.abort()
+  if (signal.aborted) local.abort()
+  else signal.addEventListener('abort', onAbort, { once: true })
+  alive()
+  try {
+    return await run(local.signal, alive)
+  } catch (error) {
+    if (stalled && !signal.aborted) throw new Error(STALLED)
+    throw error
+  } finally {
+    window.clearTimeout(timer)
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
+/** 失败了隔一会儿重试，最多 ATTEMPTS 次。取消和暂停直接抛出，不再重试。 */
+async function withRetry<T>(signal: AbortSignal, run: () => Promise<T>, onFail?: () => void): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await run()
+    } catch (error) {
+      onFail?.()
+      if (signal.aborted || attempt >= ATTEMPTS) throw error
+      await sleep(RETRY_DELAY * attempt, signal)
+    }
+  }
+}
+
+/** 只给等响应头限时。响应体之后还要接着读，所以和 signal 的联系要一直留着，不能像 watched 那样用完就拆。 */
+async function fetchResponding(url: string, signal: AbortSignal, init: RequestInit = {}): Promise<Response> {
+  const local = new AbortController()
+  let late = false
+  const timer = window.setTimeout(() => {
+    late = true
+    local.abort()
+  }, STALL_MS)
+  const onAbort = () => local.abort()
+  if (signal.aborted) local.abort()
+  else signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    return await fetch(url, { ...init, signal: local.signal })
+  } catch (error) {
+    signal.removeEventListener('abort', onAbort)
+    if (late && !signal.aborted) throw new Error(STALLED)
+    throw error
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
+/** 读下一块数据；STALL_MS 内什么都没读到就放弃这个连接。 */
+function readWithin(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<ReadableStreamReadResult<Uint8Array>> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reader.cancel().catch(() => undefined)
+      reject(new Error(STALLED))
+    }, STALL_MS)
+    reader.read().then(
+      (step) => {
+        window.clearTimeout(timer)
+        resolve(step)
+      },
+      (error: unknown) => {
+        window.clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
+
+/** 正在播放时按缓冲余量让出带宽，暂停或没有播放器时不限。 */
+function playbackRoom(video: HTMLVideoElement | null): number {
+  if (!video || video.paused || video.ended) return CONNECTIONS
+  const now = video.currentTime
+  let ahead = 0
+  for (let index = 0; index < video.buffered.length; index += 1) {
+    const end = video.buffered.end(index)
+    if (video.buffered.start(index) <= now + 0.5 && end > now) ahead = end - now
+  }
+  return PLAYING_ROOM.find(([seconds]) => ahead >= seconds)?.[1] ?? 0
+}
+
 function linkStop(signal: AbortSignal) {
   const stop = new AbortController()
   const onAbort = () => stop.abort()
@@ -178,8 +306,9 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out
 }
 
-function createGate(): Gate {
+function createGate(media?: () => HTMLVideoElement | null): Gate {
   let paused = false
+  let seen = { time: -1, end: -1, at: 0 }
   let resumeWaiters: Array<() => void> = []
   const pauseListeners = new Set<() => void>()
   return {
@@ -232,6 +361,19 @@ function createGate(): Gate {
         { once: true },
       )
       return local.signal
+    },
+    room() {
+      const video = media?.() ?? null
+      const room = playbackRoom(video)
+      if (!video || room > 0) return room
+      const time = video.currentTime
+      const end = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0
+      const now = performance.now()
+      if (time !== seen.time || end !== seen.end) {
+        seen = { time, end, at: now }
+        return 0
+      }
+      return now - seen.at >= STUCK_LIMIT ? 1 : 0
     },
   }
 }
@@ -382,18 +524,13 @@ function parseMediaPlaylist(text: string, base: string): Part[] {
   return parts
 }
 
-async function fetchBytes(url: string, signal: AbortSignal, headers?: HeadersInit): Promise<{ bytes: Uint8Array; status: number }> {
-  const once = async () => {
-    const response = await fetch(url, { signal, headers })
+/** 不在这里重试：取密钥发生在 fetchPart 里，失败会随整段一起重试。 */
+function fetchBytes(url: string, signal: AbortSignal, headers?: HeadersInit): Promise<{ bytes: Uint8Array; status: number }> {
+  return watched(signal, async (local) => {
+    const response = await fetch(url, { signal: local, headers, priority: 'low' })
     if (!response.ok && response.status !== 206) throw new Error('片段没有回应')
     return { bytes: new Uint8Array(await response.arrayBuffer()), status: response.status }
-  }
-  try {
-    return await once()
-  } catch (error) {
-    if (signal.aborted) throw error
-    return await once()
-  }
+  })
 }
 
 function totalFromContentRange(header: string | null): number {
@@ -425,28 +562,33 @@ async function readPart(
 ): Promise<Uint8Array> {
   const headers: HeadersInit = {}
   if (part.range) headers.Range = `bytes=${part.range.offset}-${part.range.offset + part.range.length - 1}`
-  const response = await fetch(part.uri, { signal, headers })
-  if (!response.ok && response.status !== 206) throw new Error('片段没有回应')
-  const declared = Number(response.headers.get('content-length') || 0)
-  if (declared > 0) onBytes(0, declared)
-  const chunks: Uint8Array[] = []
-  if (!response.body) {
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    onBytes(bytes.byteLength, declared || bytes.byteLength)
-    chunks.push(bytes)
-  } else {
-    const reader = response.body.getReader()
-    while (true) {
-      const step = await reader.read()
-      if (step.done) break
-      chunks.push(step.value)
-      onBytes(step.value.byteLength, declared)
+  const data = await watched(signal, async (local, alive) => {
+    const response = await fetch(part.uri, { signal: local, headers, priority: 'low' })
+    if (!response.ok && response.status !== 206) throw new Error('片段没有回应')
+    alive()
+    const declared = Number(response.headers.get('content-length') || 0)
+    if (declared > 0) onBytes(0, declared)
+    const chunks: Uint8Array[] = []
+    if (!response.body) {
+      const bytes = new Uint8Array(await response.arrayBuffer())
+      onBytes(bytes.byteLength, declared || bytes.byteLength)
+      chunks.push(bytes)
+    } else {
+      const reader = response.body.getReader()
+      while (true) {
+        const step = await reader.read()
+        if (step.done) break
+        alive()
+        chunks.push(step.value)
+        onBytes(step.value.byteLength, declared)
+      }
     }
-  }
-  let data = concat(chunks)
-  if (part.range && response.status === 200 && data.byteLength > part.range.length) {
-    data = data.slice(part.range.offset, part.range.offset + part.range.length)
-  }
+    const body = concat(chunks)
+    if (part.range && response.status === 200 && body.byteLength > part.range.length) {
+      return body.slice(part.range.offset, part.range.offset + part.range.length)
+    }
+    return body
+  })
   if (!part.decrypt) return data
   const key = await cryptoKey(part.decrypt.uri, signal)
   const cipher = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer
@@ -458,7 +600,7 @@ async function readPart(
   return new Uint8Array(plain)
 }
 
-async function fetchPart(part: Part, signal: AbortSignal, onBytes: (delta: number, size: number) => void): Promise<Uint8Array> {
+function fetchPart(part: Part, signal: AbortSignal, onBytes: (delta: number, size: number) => void): Promise<Uint8Array> {
   let reported = 0
   const note = (delta: number, size: number) => {
     reported += delta
@@ -469,35 +611,35 @@ async function fetchPart(part: Part, signal: AbortSignal, onBytes: (delta: numbe
     onBytes(-reported, 0)
     reported = 0
   }
-  try {
-    return await readPart(part, signal, note)
-  } catch (error) {
-    undo()
-    if (signal.aborted) throw error
-    try {
-      return await readPart(part, signal, note)
-    } catch (retryError) {
-      undo()
-      throw retryError
-    }
-  }
+  return withRetry(signal, () => readPart(part, signal, note), undo)
 }
 
 function isFmp4(parts: Part[]): boolean {
   return parts.some((part) => part.map || /\.(mp4|m4s|cmfv|cmfa)(?:$|\?)/i.test(part.uri))
 }
 
-function alignTs(bytes: Uint8Array): Uint8Array {
-  if (bytes.length >= 188 && bytes[0] === 0x47) return bytes
-  const limit = Math.min(bytes.length - 188, 188 * 4)
-  for (let index = 0; index <= limit; index += 1) {
-    if (bytes[index] === 0x47 && bytes[index + 188] === 0x47) return bytes.subarray(index)
+/** TS 转成 MP4。HLS 每个片段单独收尾；直链 TS 攒够一段再交给转封装，免得切得太碎。 */
+function createTsWriter(sink: Sink) {
+  const demuxer = createTsDemuxer()
+  const remuxer = createMp4Remuxer(sink)
+  let unread = 0
+  return {
+    async segment(bytes: Uint8Array) {
+      demuxer.push(bytes)
+      await remuxer.add(demuxer.flush())
+    },
+    async stream(bytes: Uint8Array) {
+      demuxer.push(bytes)
+      unread += bytes.byteLength
+      if (unread < MIN_PIECE) return
+      unread = 0
+      await remuxer.add(demuxer.take())
+    },
+    async finish() {
+      await remuxer.add(demuxer.flush())
+      await remuxer.finish()
+    },
   }
-  return bytes
-}
-
-function createTransmuxer() {
-  return new muxjs.mp4.Transmuxer({ keepOriginalTimestamps: true })
 }
 
 type WriteData = Uint8Array | { type: 'write'; position: number; data: Uint8Array }
@@ -558,18 +700,18 @@ async function openSink(filename: string, ext: string, mime: string): Promise<Si
       if (error instanceof DOMException && error.name === 'AbortError') throw new DownloadCancelled()
     }
   }
-  const stored: { at: number; data: Uint8Array }[] = []
+  /** 按位置存：带位置的写要么落在新的位置，要么原样覆盖之前同一位置、同样长度的一块（比如回填文件头）。 */
+  const stored = new Map<number, Uint8Array>()
   let cursor = 0
   return serializeSink({
     write: async (data, position) => {
       const at = position ?? cursor
       cursor = Math.max(cursor, at + data.byteLength)
-      stored.push({ at, data })
+      stored.set(at, data)
     },
     close: async () => {
-      stored.sort((left, right) => left.at - right.at)
       const blob = new Blob(
-        stored.map((item) => item.data),
+        [...stored.entries()].sort(([left], [right]) => left - right).map(([, data]) => data),
         { type: mime },
       )
       const href = URL.createObjectURL(blob)
@@ -582,7 +724,7 @@ async function openSink(filename: string, ext: string, mime: string): Promise<Si
       window.setTimeout(() => URL.revokeObjectURL(href), 60_000)
     },
     abort: async () => {
-      stored.length = 0
+      stored.clear()
     },
   })
 }
@@ -598,11 +740,15 @@ async function withSink(sink: Sink, task: () => Promise<void>) {
 }
 
 async function readPlaylist(url: string, signal: AbortSignal): Promise<{ text: string; base: string }> {
-  const response = await fetch(url, { signal })
-  if (!response.ok) throw new Error('播放列表没有回应')
-  const raw = await response.text()
+  const { raw, responseUrl } = await withRetry(signal, () =>
+    watched(signal, async (local) => {
+      const response = await fetch(url, { signal: local })
+      if (!response.ok) throw new Error('播放列表没有回应')
+      return { raw: await response.text(), responseUrl: response.url }
+    }),
+  )
   if (!raw.includes('#EXTM3U')) throw new Error('播放列表无效')
-  const upstream = upstreamFromPlay(response.url) || upstreamFromPlay(url) || url
+  const upstream = upstreamFromPlay(responseUrl) || upstreamFromPlay(url) || url
   return { text: rewritePlaylist(raw, upstream), base: upstream }
 }
 
@@ -648,6 +794,7 @@ async function runPool(
   if (!count) return
   const queue = Array.from({ length: count }, (_, index) => index)
   let failed: unknown = null
+  let active = 0
   const stop = linkStop(signal)
   const workers = Array.from({ length: Math.min(CONNECTIONS, count) }, async () => {
     while (!failed) {
@@ -658,8 +805,14 @@ async function runPool(
         throw error
       }
       if (failed || signal.aborted) return
+      if (!queue.length) return
+      if (active >= gate.room()) {
+        await sleep(PACE_POLL, stop.signal)
+        continue
+      }
       const index = queue.shift()
       if (index === undefined) return
+      active += 1
       const local = gate.fork(stop.signal)
       try {
         await task(index, local)
@@ -675,6 +828,8 @@ async function runPool(
         failed = error
         stop.abort()
         return
+      } finally {
+        active -= 1
       }
     }
   })
@@ -722,6 +877,10 @@ async function downloadOrdered(
         throw error
       }
       if (failed || signal.aborted) return
+      if (queue.length && active >= gate.room()) {
+        await sleep(PACE_POLL, stop.signal)
+        continue
+      }
       const job = take()
       if (job === undefined) {
         if (active === 0) return
@@ -795,34 +954,38 @@ async function pullRange(
   let failures = 0
   while (span.next < span.end) {
     const before = span.next
+    let failure: unknown = null
     try {
-      const response = await fetch(url, {
-        signal,
-        headers: { Range: `bytes=${span.next}-${span.end - 1}` },
+      await watched(signal, async (local, alive) => {
+        const response = await fetch(url, {
+          signal: local,
+          headers: { Range: `bytes=${span.next}-${span.end - 1}` },
+          priority: 'low',
+        })
+        if (response.status !== 206) throw new Error('视频没有回应')
+        if (!response.body) throw new Error('视频没有回应')
+        alive()
+        const reader = response.body.getReader()
+        while (span.next < span.end) {
+          const step = await reader.read()
+          if (step.done) break
+          let chunk = step.value
+          const room = span.end - span.next
+          if (chunk.byteLength > room) chunk = chunk.subarray(0, room)
+          await onChunk(chunk, span.next)
+          span.next += chunk.byteLength
+          onBytes(chunk.byteLength)
+          alive()
+        }
       })
-      if (response.status !== 206) throw new Error('视频没有回应')
-      if (!response.body) throw new Error('视频没有回应')
-      const reader = response.body.getReader()
-      while (span.next < span.end) {
-        const step = await reader.read()
-        if (step.done) break
-        let chunk = step.value
-        const room = span.end - span.next
-        if (chunk.byteLength > room) chunk = chunk.subarray(0, room)
-        await onChunk(chunk, span.next)
-        span.next += chunk.byteLength
-        onBytes(chunk.byteLength)
-      }
-      if (span.next >= span.end) return
-      if (span.next === before) {
-        failures += 1
-        if (failures > 2) throw new Error('视频没有回应')
-      } else failures = 0
     } catch (error) {
       if (signal.aborted) throw error
-      failures += 1
-      if (failures > 2) throw error instanceof Error ? error : new Error('视频没有回应')
+      failure = error
     }
+    if (span.next >= span.end) return
+    failures = span.next > before ? 1 : failures + 1
+    if (failures >= ATTEMPTS) throw failure instanceof Error ? failure : new Error('视频没有回应')
+    await sleep(RETRY_DELAY * failures, signal)
   }
 }
 
@@ -849,7 +1012,7 @@ function responseProbe(response: Response, playlist = ''): Probe {
 async function probe(url: string, signal: AbortSignal, gate: Gate): Promise<Probe> {
   await gate.checkpoint(signal)
   try {
-    const ranged = await fetch(url, { signal, headers: { Range: 'bytes=0-0' } })
+    const ranged = await fetchResponding(url, signal, { headers: { Range: 'bytes=0-0' } })
     const type = (ranged.headers.get('content-type') || '').toLowerCase()
     if (!ranged.ok && ranged.status !== 206) throw new Error('视频没有回应')
     if (isPlaylist(url, type)) {
@@ -869,7 +1032,7 @@ async function probe(url: string, signal: AbortSignal, gate: Gate): Promise<Prob
   } catch (error) {
     if (signal.aborted) throw error
   }
-  const full = await fetch(url, { signal })
+  const full = await fetchResponding(url, signal)
   if (!full.ok || !full.body) throw new Error('视频没有回应')
   const type = (full.headers.get('content-type') || '').toLowerCase()
   if (isPlaylist(url, type)) {
@@ -885,30 +1048,15 @@ async function streamBody(response: Response, signal: AbortSignal, gate: Gate, t
   const reader = response.body.getReader()
   while (true) {
     await gate.checkpoint(signal)
-    const step = await reader.read()
+    if (gate.room() < 1) {
+      await sleep(PACE_POLL, signal)
+      continue
+    }
+    const step = await readWithin(reader)
     if (step.done) break
     await onChunk(step.value)
     tracker.add(step.value.byteLength)
   }
-}
-
-function transmuxTs(chunks: Uint8Array[]): Uint8Array[] {
-  const transmuxer = createTransmuxer()
-  const pieces: Uint8Array[] = []
-  let wroteInit = false
-  transmuxer.on('data', (segment) => {
-    if (!wroteInit && segment.initSegment?.byteLength) {
-      pieces.push(segment.initSegment)
-      wroteInit = true
-    }
-    if (segment.data?.byteLength) pieces.push(segment.data)
-  })
-  for (const chunk of chunks) {
-    transmuxer.push(alignTs(chunk))
-    transmuxer.flush()
-  }
-  if (!wroteInit) throw new Error('这段视频暂时不能保存成 mp4')
-  return pieces
 }
 
 const MEDIA_SAMPLE = 8 * 1024
@@ -960,16 +1108,7 @@ async function writeParts(sink: Sink, parts: Part[], signal: AbortSignal, gate: 
 
 async function writeTransmuxed(sink: Sink, parts: Part[], signal: AbortSignal, gate: Gate, tracker: Tracker) {
   const sizes = new Array<number>(parts.length).fill(0)
-  const transmuxer = createTransmuxer()
-  const pending: Uint8Array[] = []
-  let wroteInit = false
-  transmuxer.on('data', (segment) => {
-    if (!wroteInit && segment.initSegment?.byteLength) {
-      pending.push(segment.initSegment)
-      wroteInit = true
-    }
-    if (segment.data?.byteLength) pending.push(segment.data)
-  })
+  const writer = createTsWriter(sink)
   await downloadOrdered(
     parts.length,
     signal,
@@ -981,15 +1120,10 @@ async function writeTransmuxed(sink: Sink, parts: Part[], signal: AbortSignal, g
         const estimate = estimateTotal(sizes, parts)
         if (estimate > 0) tracker.setTotal(estimate)
       }
-      transmuxer.push(alignTs(bytes))
-      transmuxer.flush()
-      while (pending.length) {
-        const piece = pending.shift()
-        if (piece) await sink.write(piece)
-      }
+      await writer.segment(bytes)
     },
   )
-  if (!wroteInit) throw new Error('这段视频暂时不能保存成 mp4')
+  await writer.finish()
 }
 
 async function saveParts(parts: Part[], sink: Sink, signal: AbortSignal, gate: Gate, tracker: Tracker) {
@@ -1013,16 +1147,7 @@ async function downloadByteSpans(url: string, spans: Span[], signal: AbortSignal
 }
 
 async function downloadTsSpans(url: string, spans: Span[], signal: AbortSignal, gate: Gate, sink: Sink, tracker: Tracker) {
-  const transmuxer = createTransmuxer()
-  const pending: Uint8Array[] = []
-  let wroteInit = false
-  transmuxer.on('data', (segment) => {
-    if (!wroteInit && segment.initSegment?.byteLength) {
-      pending.push(segment.initSegment)
-      wroteInit = true
-    }
-    if (segment.data?.byteLength) pending.push(segment.data)
-  })
+  const writer = createTsWriter(sink)
   await downloadOrdered(
     spans.length,
     signal,
@@ -1042,16 +1167,9 @@ async function downloadTsSpans(url: string, spans: Span[], signal: AbortSignal, 
       span.chunks = []
       return data
     },
-    async (index, bytes) => {
-      transmuxer.push(index === 0 ? alignTs(bytes) : bytes)
-      transmuxer.flush()
-      while (pending.length) {
-        const piece = pending.shift()
-        if (piece) await sink.write(piece)
-      }
-    },
+    (_index, bytes) => writer.stream(bytes),
   )
-  if (!wroteInit) throw new Error('这段视频暂时不能保存成 mp4')
+  await writer.finish()
 }
 
 async function downloadDirect(url: string, sink: Sink, signal: AbortSignal, gate: Gate, tracker: Tracker) {
@@ -1076,12 +1194,9 @@ async function downloadDirect(url: string, sink: Sink, signal: AbortSignal, gate
   }
   if (!found.response) throw new Error('视频没有回应')
   if (isTransportStream(url, found.type)) {
-    const chunks: Uint8Array[] = []
-    await streamBody(found.response, signal, gate, tracker, async (chunk) => {
-      chunks.push(chunk)
-    })
-    const pieces = transmuxTs(chunks)
-    for (const piece of pieces) await sink.write(piece)
+    const writer = createTsWriter(sink)
+    await streamBody(found.response, signal, gate, tracker, (chunk) => writer.stream(chunk))
+    await writer.finish()
     return
   }
   await streamBody(found.response, signal, gate, tracker, async (chunk) => {
@@ -1122,10 +1237,12 @@ export async function downloadMedia(options: {
   signal: AbortSignal
   onProgress: Progress
   onGate?: (gate: DownloadGate) => void
+  /** 页面上正在用的播放器，边播边下时给它让带宽。 */
+  media?: () => HTMLVideoElement | null
 }): Promise<void> {
-  const { url, filename, signal, onProgress, onGate } = options
+  const { url, filename, signal, onProgress, onGate, media } = options
   if (!url) throw new Error('还没有播放地址')
-  const gate = createGate()
+  const gate = createGate(media)
   onGate?.(gate)
   const tracker = createTracker(onProgress)
   tracker.open()
