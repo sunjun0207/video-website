@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { LoadingPane } from '../components/LoadingPane'
+import { preloadPlayer } from '../components/Player'
 import { PosterGrid } from '../components/PosterGrid'
 import { PosterFace } from '../components/Poster'
 import { channelName, getVideo, metaLine, relatedVideos } from '../lib/api'
@@ -21,6 +22,7 @@ export function DetailPage({ id, libraryVersion, onLibraryChange }: { id: string
         if (!live) return
         setItem(video)
         prefetchPlay(video.id, historyOf(video.id)?.ep ?? 0)
+        preloadPlayer()
       })
       .catch((reason: unknown) => {
         if (live) setError(friendlyError(reason, '没有找到这部片子。'))

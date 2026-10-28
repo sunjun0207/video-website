@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { LoadingPane } from '../components/LoadingPane'
-import { Player } from '../components/Player'
+import { Player, preloadPlayer } from '../components/Player'
 import { PosterGrid } from '../components/PosterGrid'
 import { channelName, getVideo, relatedVideos } from '../lib/api'
 import { friendlyError } from '../lib/friendlyError'
@@ -96,6 +96,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
     let live = true
     setError('')
     setLineName('')
+    preloadPlayer()
     ensureDetail(id)
       .then((video) => {
         if (!live) return null

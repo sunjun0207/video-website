@@ -1,0 +1,12 @@
+# 由 10-video-website-select-templates.sh 在容器启动时用 envsubst 渲染到 /etc/nginx/conf.d/vod-upstream.conf(http 级别),
+# 供 app-locations.conf 的 /api-video-pomelo7-server/vod/ 复用到片库的连接。
+#
+# server 带 resolve:运行时才解析域名,容器启动瞬间 DNS 不通时 nginx 也不会退出。需要 nginx 1.27.3 及以上。
+upstream video_website_vod {
+    zone video_website_vod 64k;
+    resolver 223.5.5.5 119.29.29.29 valid=300s ipv6=off;
+    resolver_timeout 5s;
+    server ${VOD_SERVER} resolve;
+    keepalive 16;
+    keepalive_timeout 20s;
+}
