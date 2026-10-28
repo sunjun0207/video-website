@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { LoadingPane } from '../components/LoadingPane'
 import { PosterGrid } from '../components/PosterGrid'
+import { localMatches } from '../lib/api'
 import { searchHash } from '../lib/route'
 import { useLiveSuggest } from '../lib/suggest'
 import { friendlyError } from '../lib/friendlyError'
@@ -61,6 +62,7 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
     if (node instanceof HTMLElement) node.scrollIntoView({ block: 'start' })
   }, [anchorId, items])
 
+  const local = items === null && !error ? localMatches(q) : []
   const typed = Boolean(keyword.trim())
   const panelOpen = suggestOpen && typed && (suggests.length > 0 || pending)
 
@@ -132,7 +134,16 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
       {q.trim() ? (
         <section ref={gridRef}>
           {error ? <p className="note">{error}</p> : null}
-          {items === null && !error ? <LoadingPane kind="search" title={`正在片库里找「${q}」…`} /> : null}
+          {items === null && !error && local.length ? (
+            <>
+              <p className="note search-pending">
+                <span className="spin" />
+                <span>先列出已经知道的，正在片库里找更多「{q}」…</span>
+              </p>
+              <PosterGrid items={local} onOpen={(item) => setSearchAnchor(q, item.id)} />
+            </>
+          ) : null}
+          {items === null && !error && !local.length ? <LoadingPane kind="search" title={`正在片库里找「${q}」…`} /> : null}
           {items && items.length === 0 ? <p className="note">没有找到和「{q}」有关的片子。</p> : null}
           {items && items.length > 0 ? (
             <PosterGrid

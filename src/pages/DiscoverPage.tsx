@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CatalogGate } from '../components/CatalogGate'
-import { Poster } from '../components/Poster'
+import { Poster, usePrefetchDetail } from '../components/Poster'
 import { SectionHead } from '../components/SectionHead'
 import { heroVideos, hotVideos, listByChannel, rankVideos } from '../lib/api'
 import { CHANNELS, CHARTS } from '../lib/catalog'
-import { getHistory } from '../lib/storage'
+import { getHistory, type WatchRecord } from '../lib/storage'
 
 const TONES = ['ink', 'teal', 'sand'] as const
 
@@ -23,6 +23,7 @@ function Banner() {
   }, [paused, items.length])
 
   if (!items.length) return null
+  const active = index % items.length
 
   return (
     <section
@@ -35,8 +36,8 @@ function Banner() {
       {items.map((item, i) => (
         <div
           key={item.id}
-          className={`banner-slide tone-${TONES[i % TONES.length]}${item.cover ? ' has-photo' : ''}${i === index ? ' is-on' : ''}`}
-          aria-hidden={i !== index}
+          className={`banner-slide tone-${TONES[i % TONES.length]}${item.cover ? ' has-photo' : ''}${i === active ? ' is-on' : ''}`}
+          aria-hidden={i !== active}
           style={
             item.cover
               ? { backgroundImage: `linear-gradient(100deg, rgba(11,31,36,.88) 18%, rgba(11,31,36,.28)), url(${item.cover})` }
@@ -58,7 +59,7 @@ function Banner() {
         type="button"
         className="banner-arrow prev"
         aria-label="上一张"
-        onClick={() => setIndex((value) => (value + items.length - 1) % items.length)}
+        onClick={() => setIndex((active + items.length - 1) % items.length)}
       >
         ‹
       </button>
@@ -66,7 +67,7 @@ function Banner() {
         type="button"
         className="banner-arrow next"
         aria-label="下一张"
-        onClick={() => setIndex((value) => (value + 1) % items.length)}
+        onClick={() => setIndex((active + 1) % items.length)}
       >
         ›
       </button>
@@ -75,13 +76,26 @@ function Banner() {
           <button
             key={item.id}
             type="button"
-            className={i === index ? 'on' : ''}
+            className={i === active ? 'on' : ''}
             aria-label={`第 ${i + 1} 张`}
             onClick={() => setIndex(i)}
           />
         ))}
       </div>
     </section>
+  )
+}
+
+function RecentItem({ item }: { item: WatchRecord }) {
+  const prefetch = usePrefetchDetail(item.id)
+  return (
+    <a className="recent-item" href={`#/play/${item.id}/${item.ep}`} {...prefetch}>
+      {item.cover ? <img src={item.cover} alt="" loading="lazy" decoding="async" /> : <span />}
+      <span>
+        <strong>{item.title}</strong>
+        <em>{item.ep > 0 ? `第 ${item.ep + 1} 段` : '正片'}</em>
+      </span>
+    </a>
   )
 }
 
@@ -120,13 +134,7 @@ function DiscoverBody({ libraryVersion }: { libraryVersion: number }) {
         ) : (
           <div className="recent-list">
             {recent.map((item) => (
-              <a key={item.id} className="recent-item" href={`#/play/${item.id}/${item.ep}`}>
-                {item.cover ? <img src={item.cover} alt="" /> : <span />}
-                <span>
-                  <strong>{item.title}</strong>
-                  <em>{item.ep > 0 ? `第 ${item.ep + 1} 段` : '正片'}</em>
-                </span>
-              </a>
+              <RecentItem key={item.id} item={item} />
             ))}
           </div>
         )}

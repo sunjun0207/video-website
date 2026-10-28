@@ -263,6 +263,13 @@ a {
   gap: 8px;
 }
 
+.note.search-pending {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 14px;
+}
+
 .header-search,
 .nav-toggle {
   display: none;
@@ -1324,6 +1331,20 @@ a {
   font-variant-numeric: tabular-nums;
 }
 .download-status strong { color: var(--teal-deep); }
+.download-done {
+  display: flex;
+  flex: 1 1 320px;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  align-items: center;
+  min-width: min(100%, 280px);
+}
+.download-done .download-status {
+  flex: 1 1 200px;
+  min-width: 0;
+  margin: 0;
+}
+.download-done .download-status span { overflow-wrap: anywhere; }
 .line-chips { margin-top: 12px; }
 
 .play-side {

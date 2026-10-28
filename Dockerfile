@@ -4,7 +4,8 @@
 #   njsmod : 编译 ngx_http_js_module，用来把片库校验的 850 改成 200
 #   runner : nginx 托管 dist/，并把 /api-video-pomelo7-server/* 反代到片库
 ARG NODE_IMAGE=node:20-alpine
-ARG NGINX_IMAGE=nginx:1.27-alpine
+# vod-upstream.conf 的 server … resolve 需要 nginx 1.27.3 及以上；固定版本，免得本机缓存的旧 1.27 镜像起不来。
+ARG NGINX_IMAGE=nginx:1.27.5-alpine
 
 FROM ${NODE_IMAGE} AS builder
 WORKDIR /app
