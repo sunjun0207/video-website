@@ -3,6 +3,7 @@
 #
 # ${VITE_*_TARGET} 来自 compose env_file 加载的 .env.local / .env.dev / .env.pro,
 # 与 vite.config.ts 的 server.proxy 使用同一份目标地址。
+# ${VOD_*} 是脚本从 VITE_VOD_TARGET 拆出来的协议 / 主机 / 端口 / 路径。
 # 只有白名单变量会被替换,nginx 自身的 $uri / $host 等不受影响。
 
 root  /usr/share/nginx/html;
@@ -34,18 +35,19 @@ location / {
 
 # 片库页面。浏览器校验 Cookie 要原样带给上游,所以不 include proxy-common.conf。
 # js_header_filter 只把校验状态 850 改成 200,仍由本 location 直连片库。
+# 走 conf.d/vod-upstream.conf 的 video_website_vod 复用连接:proxy_http_version 1.1 和 Connection "" 不能删,
+# Host / SNI 要写片库域名,$proxy_host 在这里是 upstream 名字。
 location /api-video-pomelo7-server/vod/ {
-    set $vod_backend ${VITE_VOD_TARGET};
     rewrite ^/api-video-pomelo7-server/vod/?(.*)$ /$1 break;
-    proxy_pass $vod_backend$uri$is_args$args;
+    proxy_pass ${VOD_SCHEME}://video_website_vod${VOD_PATH}$uri$is_args$args;
     js_header_filter vod.rewriteStatus;
     proxy_http_version 1.1;
     proxy_ssl_server_name on;
+    proxy_ssl_name ${VOD_HOST};
     proxy_ssl_protocols TLSv1.2 TLSv1.3;
     proxy_ssl_verify off;
-    proxy_set_header Host $proxy_host;
+    proxy_set_header Host ${VOD_HOSTPORT};
     proxy_set_header Connection "";
-    proxy_set_header Accept-Encoding "";
     proxy_set_header Referer "https://www.dushe05.com/";
     proxy_set_header User-Agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     proxy_set_header Cookie $http_cookie;

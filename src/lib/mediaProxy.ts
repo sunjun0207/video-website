@@ -1,3 +1,5 @@
+import { stripAdBreaks } from './adFilter'
+
 /** 片库页面始终走本站 /vod。封面和播放只在 VITE_USE_PROXY=true 时走本站代理。 */
 export const API_PREFIX = '/api-video-pomelo7-server'
 
@@ -76,51 +78,6 @@ export function playProxy(absolute: string): string {
 export function absolutePlayUrl(absolute: string): string {
   if (!useSourceProxy) return absolute
   return new URL(playProxy(absolute), window.location.origin).href
-}
-
-const AD_BREAK_MAX = 40
-
-/** 正片之间不足 40 秒、且旁边有一段足够长的不连续片段，按插播广告去掉。 */
-export function stripAdBreaks(text: string): string {
-  if (!text.includes('#EXTINF')) return text
-  const rows = text.split(/\r?\n/)
-  const head: string[] = []
-  const groups: { lines: string[]; duration: number; adUri: boolean }[] = []
-  let current: { lines: string[]; duration: number; adUri: boolean } | null = null
-  let seenMedia = false
-  for (const line of rows) {
-    const trimmed = line.trim()
-    if (trimmed === '#EXT-X-DISCONTINUITY') {
-      if (current) groups.push(current)
-      current = { lines: [], duration: 0, adUri: false }
-      seenMedia = true
-      continue
-    }
-    if (trimmed === '#EXT-X-ENDLIST') continue
-    if (!seenMedia && (trimmed.startsWith('#') || !trimmed)) {
-      head.push(line)
-      continue
-    }
-    if (!current) current = { lines: [], duration: 0, adUri: false }
-    seenMedia = true
-    current.lines.push(line)
-    const inf = trimmed.match(/^#EXTINF:([\d.]+)/)
-    if (inf) current.duration += Number(inf[1])
-    if (trimmed && !trimmed.startsWith('#') && /(?:^|\/)(?:ad|ads|adv|adjump|gg)(?:\/|\.|$)|广告/i.test(trimmed)) {
-      current.adUri = true
-    }
-  }
-  if (current) groups.push(current)
-  const hasProgram = groups.some((group) => group.duration >= 90)
-  const kept = groups.filter((group) => {
-    if (!hasProgram) return true
-    if (group.adUri) return false
-    return !(group.duration > 0 && group.duration <= AD_BREAK_MAX)
-  })
-  if (!kept.length || kept.length === groups.length) return text
-  const body = kept.flatMap((group, index) => (index ? ['#EXT-X-DISCONTINUITY', ...group.lines] : group.lines))
-  const ended = rows.some((line) => line.trim() === '#EXT-X-ENDLIST')
-  return [...head, ...body, ...(ended ? ['#EXT-X-ENDLIST'] : [])].join('\n')
 }
 
 export function upstreamFromPlay(value: string): string | null {

@@ -10,11 +10,15 @@
     />
     <title>观影 jun.sun</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="%VITE_IMG_TARGET%" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- 字体样式不挡首屏：国内连 Google Fonts 常要好几秒，先用系统字体显示，字体到了再换上。 -->
     <link
       href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Syne:wght@700;800&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      as="style"
+      onload="this.onload = null; this.rel = 'stylesheet'"
     />
   </head>
   <body>

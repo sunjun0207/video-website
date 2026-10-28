@@ -3,6 +3,7 @@ import { SiteFooter } from './components/SiteFooter'
 import { SiteHeader } from './components/SiteHeader'
 import { SubNav } from './components/SubNav'
 import { useRoute } from './lib/route'
+import { onCatalogChange } from './lib/source'
 import { searchAnchor } from './lib/storage'
 import { documentTitle } from './lib/title'
 import { AboutPage } from './pages/AboutPage'
@@ -24,6 +25,8 @@ export default function App() {
   const route = useRoute()
   const [libraryVersion, setLibraryVersion] = useState(0)
   const bump = useCallback(() => setLibraryVersion((value) => value + 1), [])
+
+  useEffect(() => onCatalogChange(bump), [bump])
 
   useEffect(() => {
     document.title = documentTitle(route)

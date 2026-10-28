@@ -1,13 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
 import { LoadingPane } from '../components/LoadingPane'
-import { Player } from '../components/Player'
+import { Player, preloadPlayer } from '../components/Player'
 import { PosterGrid } from '../components/PosterGrid'
 import { channelName, getVideo, relatedVideos } from '../lib/api'
 import { friendlyError } from '../lib/friendlyError'
-import { DownloadCancelled, downloadFilename, downloadMedia, qualityFromLine, type DownloadGate, type DownloadProgress } from '../lib/downloadMedia'
-import { ensurePlayUrl } from '../lib/source'
+import {
+  canReveal,
+  DownloadCancelled,
+  downloadFilename,
+  downloadMedia,
+  qualityFromLine,
+  revealSaved,
+  type DownloadGate,
+  type DownloadProgress,
+  type SavedFile,
+} from '../lib/downloadMedia'
+import { ensureDetail, ensurePlayUrl, prefetchPlay } from '../lib/source'
 import { historyOf, rememberPlay } from '../lib/storage'
 import type { VideoItem } from '../lib/types'
+
+/** 这一集还剩这么多秒时，悄悄把下一集的线路探好。探好的地址几分钟后就会失效，不能探得太早。 */
+const NEXT_PREFETCH_LEAD = 90
+/** 刚开播的前这么多秒不探下一集，不和这一集抢带宽。 */
+const NEXT_PREFETCH_AFTER = 20
 
 function formatSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -43,11 +58,14 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
   const [download, setDownload] = useState<DownloadProgress | null>(null)
   const [downloadPaused, setDownloadPaused] = useState(false)
   const [downloadError, setDownloadError] = useState('')
+  const [saved, setSaved] = useState<SavedFile | null>(null)
   const [pick, setPick] = useState<{ id: string; ep: number; path: string } | null>(null)
   const downloadAbort = useRef<AbortController | null>(null)
   const downloadGate = useRef<DownloadGate | null>(null)
+  const mediaRef = useRef<HTMLVideoElement | null>(null)
   const savedAt = useRef(0)
   const advanced = useRef(false)
+  const nextPrefetched = useRef(false)
   const index = item && item.episodes.length ? Math.min(Math.max(ep, 0), item.episodes.length - 1) : Math.max(ep, 0)
   const episode = item?.episodes[index]
   const history = item ? historyOf(item.id) : undefined
@@ -58,12 +76,14 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
 
   useEffect(() => {
     advanced.current = false
+    nextPrefetched.current = false
   }, [id, index])
 
   useEffect(() => {
     setDownloadError('')
     setDownload(null)
     setDownloadPaused(false)
+    setSaved(null)
     downloadGate.current = null
     const current = downloadAbort
     return () => {
@@ -76,9 +96,15 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
     let live = true
     setError('')
     setLineName('')
-    ensurePlayUrl(id, index, forced)
+    preloadPlayer()
+    ensureDetail(id)
+      .then((video) => {
+        if (!live) return null
+        setItem(video)
+        return ensurePlayUrl(id, index, forced)
+      })
       .then((result) => {
-        if (!live) return
+        if (!live || !result) return
         setItem(getVideo(id))
         setPlayUrl(result.url)
         setLineName(result.line)
@@ -102,6 +128,11 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
   if (!item || !episode) return <LoadingPane kind="play" title="正在加载中…" />
 
   const remember = (time: number) => {
+    const left = (mediaRef.current?.duration ?? Number.NaN) - time
+    if (!nextPrefetched.current && index < item.episodes.length - 1 && time >= NEXT_PREFETCH_AFTER && left <= NEXT_PREFETCH_LEAD) {
+      nextPrefetched.current = true
+      prefetchPlay(item.id, index + 1)
+    }
     const now = Date.now()
     if (now - savedAt.current < 1500) return
     savedAt.current = now
@@ -135,6 +166,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
     downloadGate.current = null
     setDownloadError('')
     setDownloadPaused(false)
+    setSaved(null)
     setDownload({ percent: 0, received: 0, total: 0, speed: 0 })
     const episodeName = item.episodes.length > 1 && episode.title !== item.title ? episode.title : ''
     const filename = downloadFilename(item.title, qualityFromLine(lineName), episodeName)
@@ -142,6 +174,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
       url: activeUrl,
       filename,
       signal: controller.signal,
+      media: () => mediaRef.current,
       onGate: (gate) => {
         if (downloadAbort.current === controller) downloadGate.current = gate
       },
@@ -149,12 +182,13 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
         if (downloadAbort.current === controller) setDownload(progress)
       },
     })
-      .then(() => {
+      .then((file) => {
         if (downloadAbort.current !== controller) return
         downloadAbort.current = null
         downloadGate.current = null
         setDownloadPaused(false)
         setDownload(null)
+        setSaved(file)
       })
       .catch((reason: unknown) => {
         if (downloadAbort.current !== controller) return
@@ -187,6 +221,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
             onDownload={download === null ? startDownload : toggleDownload}
             onTime={remember}
             onEnded={goNext}
+            mediaRef={mediaRef}
           />
           <div className="play-copy">
             <h1>{item.title}</h1>
@@ -195,7 +230,22 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
               {lineName ? ` · ${lineName}` : ''}
             </p>
             <div className="play-actions">
-              {download === null ? (
+              {download === null && saved ? (
+                <div className="download-done">
+                  <p className="download-status">
+                    <strong>下载完成</strong>
+                    <span>{saved.name}</span>
+                  </p>
+                  {canReveal(saved) ? (
+                    <button type="button" className="btn" onClick={() => void revealSaved(saved)}>
+                      打开所在文件夹
+                    </button>
+                  ) : null}
+                  <button type="button" className="btn btn-ghost" onClick={() => setSaved(null)}>
+                    知道了
+                  </button>
+                </div>
+              ) : download === null ? (
                 <button type="button" className="btn" disabled={!activeUrl} onClick={startDownload}>
                   下载
                 </button>
@@ -225,6 +275,9 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
               )}
             </div>
             {downloadError ? <p className="note">{downloadError}</p> : null}
+            {download === null && saved && !canReveal(saved) ? (
+              <p className="note">文件交给了浏览器保存，在浏览器的下载列表（Ctrl+J）里点“在文件夹中显示”就能打开所在位置。</p>
+            ) : null}
           </div>
           {episode.lines && episode.lines.length > 1 ? (
             <div className="chips line-chips">

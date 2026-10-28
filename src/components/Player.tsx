@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import Hls from 'hls.js'
+import { useEffect, useRef, useState, type RefObject } from 'react'
+import type Hls from 'hls.js'
+import hlsWorkerUrl from 'hls.js/dist/hls.worker.js?url'
 import { absolutePlayUrl, rewritePlaylist, upstreamFromPlay } from '../lib/mediaProxy'
 import type { Episode } from '../lib/types'
 
@@ -12,6 +13,8 @@ type Props = {
   onDownload?: () => void
   onTime: (time: number) => void
   onEnded: () => void
+  /** 传入时 video 元素挂在这个 ref 上，页面可以读播放状态。 */
+  mediaRef?: RefObject<HTMLVideoElement | null>
 }
 
 function bufferedAhead(video: HTMLVideoElement) {
@@ -40,6 +43,26 @@ const retryPolicy = {
   errorRetry: { maxNumRetry: 6, retryDelayMs: 800, maxRetryDelayMs: 8000 },
 }
 
+type HlsClass = typeof Hls
+
+let hlsModule: Promise<HlsClass> | undefined
+
+function loadHls(): Promise<HlsClass> {
+  hlsModule ??= import('hls.js').then(
+    (module) => module.default,
+    (reason: unknown) => {
+      hlsModule = undefined
+      throw reason
+    },
+  )
+  return hlsModule
+}
+
+/** hls.js 单独成一块，首页不带它。详情页、播放页一打开就先拉回来，探好线路就能直接开播。 */
+export function preloadPlayer(): void {
+  void loadHls().catch(() => undefined)
+}
+
 export function Player({
   episode,
   resumeAt,
@@ -49,8 +72,10 @@ export function Player({
   onDownload,
   onTime,
   onEnded,
+  mediaRef,
 }: Props) {
-  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const ownVideoRef = useRef<HTMLVideoElement | null>(null)
+  const videoRef = mediaRef ?? ownVideoRef
   const stageRef = useRef<HTMLDivElement | null>(null)
   const onEndedRef = useRef(onEnded)
   const resumed = useRef(false)
@@ -80,6 +105,7 @@ export function Player({
     const video = videoRef.current
     if (!video || !episode.url) return
     let hls: Hls | undefined
+    let live = true
     let recovered = false
     let still = 0
     let lastTime = -1
@@ -93,7 +119,11 @@ export function Player({
       instance.autoLevelCapping = cap
       instance.loadLevel = cap
     }
-    if (episode.url.includes('.m3u8') && Hls.isSupported()) {
+    const playNative = () => {
+      video.src = episode.url
+      video.load()
+    }
+    const playHls = (Hls: HlsClass) => {
       const BaseLoader = Hls.DefaultConfig.loader
       class ProxyLoader extends BaseLoader {
         load(...args: Parameters<InstanceType<typeof BaseLoader>['load']>) {
@@ -115,6 +145,8 @@ export function Player({
       hls = new Hls({
         lowLatencyMode: false,
         enableWorker: true,
+        // ESM 版的 hls.js 不自带 worker，不给 workerPath 时 enableWorker 不起作用，转封装会跑在主线程上。
+        workerPath: hlsWorkerUrl,
         startLevel: 0,
         capLevelToPlayerSize: true,
         abrEwmaDefaultEstimate: 600000,
@@ -147,9 +179,19 @@ export function Player({
         }
         setError('这一段暂时安静了，换一条线路，或稍后再来。')
       })
+    }
+    if (episode.url.includes('.m3u8')) {
+      loadHls()
+        .then((Hls) => {
+          if (!live) return
+          if (Hls.isSupported()) playHls(Hls)
+          else playNative()
+        })
+        .catch(() => {
+          if (live) setError('播放器没有加载上来，刷新页面再试一次。')
+        })
     } else {
-      video.src = episode.url
-      video.load()
+      playNative()
     }
     const stuckTimer = window.setInterval(() => {
       if (!played.current || video.paused || video.ended || video.seeking) {
@@ -174,6 +216,7 @@ export function Player({
       void video.play().catch(() => setBlocked(true))
     }, 7000)
     return () => {
+      live = false
       window.clearInterval(stuckTimer)
       window.clearTimeout(bootTimer)
       hls?.destroy()

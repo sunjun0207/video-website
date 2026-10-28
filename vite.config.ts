@@ -49,6 +49,8 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       sourcemap: env.VITE_SOURCEMAP === 'true',
+      // hls.js 完整版单独一块约 600 kB，拆不开；它只在详情页、播放页按需加载，不进首屏。
+      chunkSizeWarningLimit: 650,
     },
   }
 })
