@@ -37,11 +37,10 @@ type Progress = (progress: DownloadProgress) => void
 const CONNECTIONS = 6
 const MIN_PIECE = 1024 * 1024
 const TS_PACKET = 188
-/** 边播边下：播放器还缓冲着多少秒时，下载最多开几路。浏览器对同一站点只开 6 路，要给播放器留位置。 */
+/** 边播边下：播放器还缓冲着多少秒时，下载最多开几路。浏览器对同一站点只开 6 路，播放器自己要占 4 路（当前段和往后预取的几段）。 */
 const PLAYING_ROOM: [number, number][] = [
-  [18, 4],
-  [12, 2],
-  [6, 1],
+  [18, 2],
+  [8, 1],
 ]
 /** 缓冲见底、播放和缓冲又都这么久没动，多半是播放器自己出错停了，下载不再干等，至少留一路。 */
 const STUCK_LIMIT = 30_000
@@ -784,7 +783,8 @@ async function readPlaylist(url: string, signal: AbortSignal): Promise<{ text: s
     }),
   )
   if (!raw.includes('#EXTM3U')) throw new Error('播放列表无效')
-  const upstream = upstreamFromPlay(responseUrl) || upstreamFromPlay(url) || url
+  // 有的线路先跳到别的节点，片段只能按跳转后的地址取；原地址只回“OK”几个字节。
+  const upstream = upstreamFromPlay(responseUrl) || responseUrl || upstreamFromPlay(url) || url
   return { text: rewritePlaylist(raw, upstream), base: upstream }
 }
 
@@ -815,7 +815,7 @@ function outputFile(url: string): { ext: string; mime: string } {
 
 async function partsFromPlaylist(raw: string, responseUrl: string, requestUrl: string, signal: AbortSignal): Promise<Part[]> {
   if (!raw.includes('#EXTM3U')) throw new Error('播放列表无效')
-  const upstream = upstreamFromPlay(responseUrl) || upstreamFromPlay(requestUrl) || requestUrl
+  const upstream = upstreamFromPlay(responseUrl) || responseUrl || upstreamFromPlay(requestUrl) || requestUrl
   const text = rewritePlaylist(raw, upstream)
   if (text.includes('#EXT-X-STREAM-INF')) return mediaParts(chooseVariant(text, upstream), signal)
   return parseMediaPlaylist(text, upstream)
