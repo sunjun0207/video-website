@@ -470,7 +470,8 @@ async function readPlaylist(upstream: string, signal?: AbortSignal): Promise<{ t
   const response = await fetchSource(playProxy(upstream), { signal: timeoutSignal(7000, signal) }, '这一段暂时拿不到。')
   const text = await response.text()
   if (!response.ok || !text.includes('#EXTM3U')) throw new Error('播放列表无效')
-  return { text, url: upstreamFromPlay(response.url) || upstream }
+  // 有的线路先跳到别的节点，片段只能按跳转后的地址取；原地址只回“OK”几个字节。
+  return { text, url: upstreamFromPlay(response.url) || response.url || upstream }
 }
 
 function looksLikeMedia(buf: Uint8Array): boolean {

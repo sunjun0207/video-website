@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import type Hls from 'hls.js'
 import hlsWorkerUrl from 'hls.js/dist/hls.worker.js?url'
+import { createAdSkipper } from '../lib/adSkip'
+import { createSegmentPrefetch } from '../lib/hlsPrefetch'
 import { absolutePlayUrl, rewritePlaylist, upstreamFromPlay } from '../lib/mediaProxy'
 import type { Episode } from '../lib/types'
 
@@ -24,6 +26,10 @@ function bufferedAhead(video: HTMLVideoElement) {
     if (end > video.currentTime) ahead = Math.max(ahead, end - video.currentTime)
   }
   return ahead
+}
+
+function playUrl(url: string) {
+  return url.includes('/api-video-pomelo7-server/play/') ? url : absolutePlayUrl(url)
 }
 
 function formatTime(value: number): string {
@@ -105,6 +111,7 @@ export function Player({
     const video = videoRef.current
     if (!video || !episode.url) return
     let hls: Hls | undefined
+    const stops: (() => void)[] = []
     let live = true
     let recovered = false
     let still = 0
@@ -129,7 +136,7 @@ export function Player({
         load(...args: Parameters<InstanceType<typeof BaseLoader>['load']>) {
           const [context, config, callbacks] = args
           const upstream = upstreamFromPlay(context.url) || context.url
-          if (!String(context.url).includes('/api-video-pomelo7-server/play/')) context.url = absolutePlayUrl(context.url)
+          context.url = playUrl(String(context.url))
           const onSuccess = callbacks.onSuccess
           callbacks.onSuccess = (response, stats, ctx, networkDetails) => {
             const detailUrl = networkDetails && 'responseURL' in networkDetails ? networkDetails.responseURL : networkDetails?.url
@@ -142,6 +149,9 @@ export function Player({
           super.load(context, config, callbacks)
         }
       }
+      const prefetch = createSegmentPrefetch(ProxyLoader, () => hls, playUrl)
+      const skipper = createAdSkipper(video, () => hls)
+      stops.push(prefetch.dispose, skipper.stop)
       hls = new Hls({
         lowLatencyMode: false,
         enableWorker: true,
@@ -152,8 +162,9 @@ export function Player({
         abrEwmaDefaultEstimate: 600000,
         abrBandWidthFactor: 0.8,
         abrBandWidthUpFactor: 0.55,
-        maxBufferLength: 24,
-        maxMaxBufferLength: 42,
+        // 片源偶尔会停顿十几秒，缓冲多攒一些才扛得住。
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
         backBufferLength: 12,
         maxBufferHole: 0.5,
         startFragPrefetch: true,
@@ -165,10 +176,12 @@ export function Player({
         playlistLoadPolicy: { default: retryPolicy },
         fragLoadPolicy: { default: retryPolicy },
         loader: ProxyLoader,
+        fLoader: prefetch.Loader,
       })
       hls.loadSource(episode.url)
       hls.attachMedia(video)
       hls.on(Hls.Events.MANIFEST_PARSED, () => capLevel(hls as Hls))
+      hls.on(Hls.Events.INIT_PTS_FOUND, (_, data) => skipper.found(data))
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal || !hls) return
         if (!recovered) {
@@ -220,6 +233,7 @@ export function Player({
       window.clearInterval(stuckTimer)
       window.clearTimeout(bootTimer)
       hls?.destroy()
+      stops.forEach((stop) => stop())
       video.removeAttribute('src')
       video.load()
     }
