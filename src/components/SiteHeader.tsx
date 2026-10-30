@@ -21,8 +21,9 @@ export function SiteHeader({ route }: { route: Route }) {
   const [keyword, setKeyword] = useState(route.name === 'search' ? route.q : '')
   const [history, setHistory] = useState<string[]>([])
   const [suggestOpen, setSuggestOpen] = useState(false)
+  const [composing, setComposing] = useState(false)
   const slotRef = useRef<HTMLDivElement>(null)
-  const { suggests, pending } = useLiveSuggest(keyword, suggestOpen)
+  const { suggests, pending } = useLiveSuggest(keyword, suggestOpen, composing)
 
   useEffect(() => {
     const close = () => setOpen(false)
@@ -102,6 +103,8 @@ export function SiteHeader({ route }: { route: Route }) {
                 setKeyword(event.target.value)
                 setSuggestOpen(true)
               }}
+              onCompositionStart={() => setComposing(true)}
+              onCompositionEnd={() => setComposing(false)}
               onFocus={() => setSuggestOpen(true)}
               placeholder="搜索片名、演员"
               aria-label="搜索"

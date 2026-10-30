@@ -14,10 +14,11 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
   const [error, setError] = useState('')
   const [keyword, setKeyword] = useState(q)
   const [suggestOpen, setSuggestOpen] = useState(false)
+  const [composing, setComposing] = useState(false)
   const [history, setHistory] = useState<string[]>(() => getSearchHistory())
   const boxRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
-  const { suggests, pending } = useLiveSuggest(keyword, suggestOpen)
+  const { suggests, pending } = useLiveSuggest(keyword, suggestOpen, composing)
   void libraryVersion
 
   useEffect(() => {
@@ -92,6 +93,8 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
                 setKeyword(event.target.value)
                 setSuggestOpen(true)
               }}
+              onCompositionStart={() => setComposing(true)}
+              onCompositionEnd={() => setComposing(false)}
               onFocus={() => setSuggestOpen(true)}
               placeholder="搜索片名、演员"
               aria-label="搜索"

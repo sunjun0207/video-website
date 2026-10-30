@@ -37,6 +37,8 @@ const QUICK_ENOUGH = 2
 const PROBE_GRACE = 2500
 /** 一轮试探最长这么久，片库页面卡住不回时不至于一直等下去。 */
 const PROBE_LIMIT = 20_000
+/** 片库偶尔整站回 404、5xx 或 CDN 默认页，网络也会断一下，多半几秒就好。依次隔这么久再试。 */
+const PAGE_RETRY = [1000, 3000]
 
 type LineHealth = Record<string, { ok?: number; bad?: number }>
 
@@ -149,11 +151,37 @@ function passChallenge(html: string): Promise<void> {
   return solving
 }
 
+/** 这次没打开，过一会儿可能就好了。 */
+class PassingFailure extends Error {}
+
+/** 片库所在的 CDN 出故障时回它自己的默认页，状态照样是 200。 */
+function isDefaultSite(html: string): boolean {
+  return html.includes('Welcome to OpenResty')
+}
+
+function pause(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      window.clearTimeout(timer)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 /** 直接请求要的页面；回来的是校验页才解题再请求一次，不先去首页探 Cookie。 */
-async function fetchHtml(path: string, signal?: AbortSignal): Promise<string> {
+async function readPage(path: string, signal?: AbortSignal): Promise<string> {
   const read = async () => {
-    const response = await fetchSource(vodUrl(path), { credentials: 'same-origin', signal }, '片库这会儿没有连上。')
-    return { response, html: await response.text() }
+    try {
+      const response = await fetch(vodUrl(path), { credentials: 'same-origin', signal })
+      return { response, html: await response.text() }
+    } catch {
+      throw new PassingFailure('片库这会儿没有连上。')
+    }
   }
   const epoch = cookieEpoch
   let { response, html } = await read()
@@ -161,9 +189,24 @@ async function fetchHtml(path: string, signal?: AbortSignal): Promise<string> {
     if (epoch === cookieEpoch) await passChallenge(html)
     ;({ response, html } = await read())
   }
-  if (response.status !== 200 || isChallenge(response, html)) throw new Error('片库暂时没有打开')
-  noteToken(html)
-  return html
+  if (response.status === 200 && !isChallenge(response, html) && !isDefaultSite(html)) {
+    noteToken(html)
+    return html
+  }
+  const { status } = response
+  const passing = status === 404 || status === 429 || (status >= 500 && status < 600) || isDefaultSite(html)
+  throw passing ? new PassingFailure('片库暂时没有打开') : new Error('片库暂时没有打开')
+}
+
+async function fetchHtml(path: string, signal?: AbortSignal): Promise<string> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await readPage(path, signal)
+    } catch (error) {
+      if (signal?.aborted || !(error instanceof PassingFailure) || attempt >= PAGE_RETRY.length) throw error
+    }
+    await pause(PAGE_RETRY[attempt], signal)
+  }
 }
 
 function visibleTitle(block: string): string {

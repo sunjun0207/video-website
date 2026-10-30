@@ -3,7 +3,8 @@
 #
 #  1. 校验反代所需的 VITE_*_TARGET(由 compose env_file 加载 .env.<env>)
 #  2. 用 envsubst 渲染 /etc/nginx/snippets/app-locations.conf 和 /etc/nginx/conf.d/vod-upstream.conf(只替换白名单变量)
-#  3. 按 SSL_ENABLED 决定往 /etc/nginx/templates 放哪些 server 模板
+#  3. 按 VITE_VOD_BACKUP_TARGETS 生成片库备用地址 vod-failover.conf / vod-backups.conf
+#  4. 按 SSL_ENABLED 决定往 /etc/nginx/templates 放哪些 server 模板
 set -eu
 
 AVAILABLE=/etc/nginx/templates-available
@@ -48,6 +49,46 @@ envsubst "$whitelist" \
   < "$AVAILABLE/vod-upstream.conf.template" \
   > "$CONF_D/vod-upstream.conf"
 log "已渲染 app-locations.conf / vod-upstream.conf:vod=$VITE_VOD_TARGET($VOD_SERVER) img=$VITE_IMG_TARGET"
+
+# 片库备用地址(可选,逗号分隔):同一个片库的其他域名。主地址回 404 / 5xx 或连不上时依次改走下一个。
+# vod-failover.conf 放进主 location,vod-backups.conf 是一串命名 location;没配时两个都是空文件。
+: > "$SNIPPETS/vod-failover.conf"
+: > "$SNIPPETS/vod-backups.conf"
+set -f
+set -- $(echo "${VITE_VOD_BACKUP_TARGETS:-}" | tr ',\r' '  ')
+set +f
+n=0
+for target in "$@"; do
+  case "$target" in
+    http://*|https://*) ;;
+    *) die "VITE_VOD_BACKUP_TARGETS 里的 $target 必须以 http:// 或 https:// 开头" ;;
+  esac
+  n=$((n + 1))
+  rest=${target#*://}
+  hostport=${rest%%/*}
+  path=
+  case "$rest" in */*) path=/${rest#*/} ;; esac
+  path=${path%/}
+  {
+    echo "location @vod_backup_$n {"
+    echo "    proxy_pass ${target%%://*}://$hostport$path\$uri\$is_args\$args;"
+    echo "    proxy_ssl_name ${hostport%%:*};"
+    echo "    proxy_set_header Host $hostport;"
+    echo "    include $SNIPPETS/vod-common.conf;"
+    if [ "$n" -lt "$#" ]; then
+      echo "    proxy_intercept_errors on;"
+      echo "    recursive_error_pages on;"
+      echo "    error_page 404 500 502 503 504 = @vod_backup_$((n + 1));"
+    fi
+    echo "}"
+  } >> "$SNIPPETS/vod-backups.conf"
+done
+if [ "$n" -gt 0 ]; then
+  # 第一次转去备用地址时就要开 recursive_error_pages,否则备用地址再出错不会接着往下转。
+  printf '%s\n' 'proxy_intercept_errors on;' 'recursive_error_pages on;' 'error_page 404 500 502 503 504 = @vod_backup_1;' \
+    > "$SNIPPETS/vod-failover.conf"
+  log "片库备用地址:$*"
+fi
 
 rm -f "$TEMPLATES"/*.template
 if [ "${SSL_ENABLED:-false}" = "true" ]; then

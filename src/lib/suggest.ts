@@ -14,7 +14,8 @@ function mergeHits(remote: SuggestHit[], local: SuggestHit[], limit: number): Su
   return hits.slice(0, limit)
 }
 
-export function useLiveSuggest(keyword: string, active: boolean) {
+/** composing：输入法还在拼字。这时框里是拼音，不拿去联想，先留着上一次的结果。 */
+export function useLiveSuggest(keyword: string, active: boolean, composing: boolean) {
   const [suggests, setSuggests] = useState<SuggestHit[]>([])
   const [pending, setPending] = useState(false)
 
@@ -22,6 +23,10 @@ export function useLiveSuggest(keyword: string, active: boolean) {
     const q = keyword.trim()
     if (!active || !q) {
       setSuggests([])
+      setPending(false)
+      return
+    }
+    if (composing) {
       setPending(false)
       return
     }
@@ -54,7 +59,7 @@ export function useLiveSuggest(keyword: string, active: boolean) {
       live = false
       window.clearTimeout(timer)
     }
-  }, [keyword, active])
+  }, [keyword, active, composing])
 
   return { suggests, pending }
 }
