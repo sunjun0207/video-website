@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getVideo, replaceCatalog, upsertVideo } from './api'
-import { loadDetail, loadHome, loadPlay, loadSearch } from './dusheClient'
+import { dropLine, loadDetail, loadHome, loadPlay, loadSearch, type PlayChoice } from './dusheClient'
 import { friendlyError } from './friendlyError'
 import type { VideoItem } from './types'
 
@@ -14,7 +14,7 @@ let catalogAt = restoreCatalog()
 let refreshing: Promise<void> | null = null
 const listeners = new Set<() => void>()
 const detailInflight = new Map<string, Promise<VideoItem>>()
-const playInflight = new Map<string, Promise<{ url: string; line: string }>>()
+const playInflight = new Map<string, Promise<PlayChoice>>()
 
 function restoreCatalog(): number {
   try {
@@ -115,12 +115,12 @@ export function ensureDetail(id: string): Promise<VideoItem> {
   return task
 }
 
-/** 详情页预取还没探完就点了播放，接着等同一次，不再重新探一遍线路。 */
-export function ensurePlayUrl(id: string, ep: number, onlyPath = ''): Promise<{ url: string; line: string }> {
-  const key = `${id}:${ep}:${onlyPath}`
+/** 详情页预取还没探完就点了播放，接着等同一次，不再重新探一遍线路。skip：开播时连不上、这次不再挑的线路。 */
+export function ensurePlayUrl(id: string, ep: number, onlyPath = '', skip: string[] = []): Promise<PlayChoice> {
+  const key = `${id}:${ep}:${onlyPath}:${skip.join('|')}`
   let task = playInflight.get(key)
   if (!task) {
-    task = resolvePlayUrl(id, ep, onlyPath).finally(() => {
+    task = resolvePlayUrl(id, ep, onlyPath, skip).finally(() => {
       playInflight.delete(key)
     })
     playInflight.set(key, task)
@@ -128,7 +128,7 @@ export function ensurePlayUrl(id: string, ep: number, onlyPath = ''): Promise<{ 
   return task
 }
 
-async function resolvePlayUrl(id: string, ep: number, onlyPath: string): Promise<{ url: string; line: string }> {
+async function resolvePlayUrl(id: string, ep: number, onlyPath: string, skip: string[]): Promise<PlayChoice> {
   const item = await ensureDetail(id)
   const episode = item.episodes[ep]
   if (!episode) throw new Error('没有这一集')
@@ -136,12 +136,19 @@ async function resolvePlayUrl(id: string, ep: number, onlyPath: string): Promise
     ? episode.lines
     : [{ label: episode.title, note: '', playPath: episode.playPath || '' }]
   ).filter((line) => line.playPath)
-  const selected = onlyPath ? lines.filter((line) => line.playPath === onlyPath) : lines
+  const selected = onlyPath
+    ? lines.filter((line) => line.playPath === onlyPath)
+    : lines.filter((line) => !skip.includes(line.playPath))
   const use = selected.length ? selected : lines
   if (!use.length) throw new Error('没有播放地址')
   // 不在这里长期记住地址：有的片源地址带签名，过一阵就只回“OK”不回画面。loadPlay 只记几分钟。
-  const data = await loadPlay(use, Boolean(onlyPath))
-  return { url: data.url, line: data.line || '' }
+  return loadPlay(use, Boolean(onlyPath))
+}
+
+/** 这一集挑中的线路开播时连不上，下次不再先挑它，也不挑给出同一个地址 url 的线路。 */
+export function dropPlayLine(id: string, ep: number, playPath: string, url: string): void {
+  const line = getVideo(id)?.episodes[ep]?.lines?.find((entry) => entry.playPath === playPath)
+  dropLine(line ?? { label: '', note: '', playPath }, url)
 }
 
 /** 鼠标停在海报上、或手指按下时先把详情拉回来，点进去就不用再等。 */

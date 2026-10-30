@@ -70,7 +70,7 @@ RUN rm -f /etc/nginx/conf.d/default.conf \
 COPY --from=njsmod /out/ngx_http_js_module.so /usr/lib/nginx/modules/ngx_http_js_module.so
 COPY docker/nginx/njs/vod.js /etc/nginx/njs/vod.js
 COPY docker/nginx/conf.d/ /etc/nginx/conf.d/
-COPY docker/nginx/snippets/proxy-common.conf /etc/nginx/snippets/proxy-common.conf
+COPY docker/nginx/snippets/ /etc/nginx/snippets/
 COPY docker/nginx/templates-available/ /etc/nginx/templates-available/
 COPY docker/nginx/10-video-website-select-templates.sh /docker-entrypoint.d/10-video-website-select-templates.sh
 RUN sed -i 's/\r$//' /docker-entrypoint.d/10-video-website-select-templates.sh /etc/nginx/njs/vod.js /etc/nginx/conf.d/vod-status.conf \

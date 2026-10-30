@@ -33,30 +33,21 @@ location / {
     try_files $uri $uri/ /index.html;
 }
 
-# 片库页面。浏览器校验 Cookie 要原样带给上游,所以不 include proxy-common.conf。
-# js_header_filter 只把校验状态 850 改成 200,仍由本 location 直连片库。
-# 走 conf.d/vod-upstream.conf 的 video_website_vod 复用连接:proxy_http_version 1.1 和 Connection "" 不能删,
+# 片库页面。共用的请求头在 snippets/vod-common.conf。
+# 走 conf.d/vod-upstream.conf 的 video_website_vod 复用连接:vod-common.conf 里的 proxy_http_version 1.1 和 Connection "" 不能删,
 # Host / SNI 要写片库域名,$proxy_host 在这里是 upstream 名字。
+# 配了 VITE_VOD_BACKUP_TARGETS 时,vod-failover.conf 让回 404 / 5xx 或连不上的请求依次改走 vod-backups.conf 里的备用地址;
+# 没配时两个文件都是空的。
 location /api-video-pomelo7-server/vod/ {
     rewrite ^/api-video-pomelo7-server/vod/?(.*)$ /$1 break;
     proxy_pass ${VOD_SCHEME}://video_website_vod${VOD_PATH}$uri$is_args$args;
-    js_header_filter vod.rewriteStatus;
-    proxy_http_version 1.1;
-    proxy_ssl_server_name on;
     proxy_ssl_name ${VOD_HOST};
-    proxy_ssl_protocols TLSv1.2 TLSv1.3;
-    proxy_ssl_verify off;
     proxy_set_header Host ${VOD_HOSTPORT};
-    proxy_set_header Connection "";
-    proxy_set_header Referer "https://www.dushe05.com/";
-    proxy_set_header User-Agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-    proxy_set_header Cookie $http_cookie;
-    proxy_hide_header Set-Cookie;
-    proxy_hide_header Access-Control-Allow-Origin;
-    add_header Access-Control-Allow-Origin "*" always;
-    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
-    add_header Access-Control-Allow-Headers "*" always;
+    include /etc/nginx/snippets/vod-common.conf;
+    include /etc/nginx/snippets/vod-failover.conf;
 }
+
+include /etc/nginx/snippets/vod-backups.conf;
 
 # img-a / img-b 必须写在 /img/ 前面没有关系:nginx 按最长前缀匹配,/img/ 匹配不到 /img-a/。
 location /api-video-pomelo7-server/img-a/ {

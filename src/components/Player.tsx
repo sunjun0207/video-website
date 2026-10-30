@@ -15,9 +15,14 @@ type Props = {
   onDownload?: () => void
   onTime: (time: number) => void
   onEnded: () => void
+  /** 这条线路开不了播时调用。返回 true 表示页面去换线路，播放器就不再报错。 */
+  onStartFail?: () => boolean
   /** 传入时 video 元素挂在这个 ref 上，页面可以读播放状态。 */
   mediaRef?: RefObject<HTMLVideoElement | null>
 }
+
+/** 开播这么久还一点画面都没缓冲上，就当这条线路连不上。探线路时它刚下得动，正常的线路用不了这么久。 */
+const START_LIMIT = 20_000
 
 function bufferedAhead(video: HTMLVideoElement) {
   let ahead = 0
@@ -78,12 +83,16 @@ export function Player({
   onDownload,
   onTime,
   onEnded,
+  onStartFail,
   mediaRef,
 }: Props) {
   const ownVideoRef = useRef<HTMLVideoElement | null>(null)
   const videoRef = mediaRef ?? ownVideoRef
   const stageRef = useRef<HTMLDivElement | null>(null)
   const onEndedRef = useRef(onEnded)
+  const onStartFailRef = useRef(onStartFail)
+  /** 还没缓冲上画面时放弃这条线路，交给页面换。每个地址只放弃一次，返回页面换没换。 */
+  const giveUpRef = useRef<() => boolean>(() => false)
   const resumed = useRef(false)
   const booted = useRef(false)
   const played = useRef(false)
@@ -96,6 +105,7 @@ export function Player({
   const [error, setError] = useState('')
 
   onEndedRef.current = onEnded
+  onStartFailRef.current = onStartFail
 
   useEffect(() => {
     resumed.current = false
@@ -116,6 +126,13 @@ export function Player({
     let recovered = false
     let still = 0
     let lastTime = -1
+    let gaveUp = false
+    giveUpRef.current = () => {
+      if (gaveUp || video.buffered.length) return false
+      gaveUp = true
+      return onStartFailRef.current?.() ?? false
+    }
+    const startTimer = window.setTimeout(() => giveUpRef.current(), START_LIMIT)
     const capLevel = (instance: Hls) => {
       const capBitrate = 1_000_000
       let cap = 0
@@ -184,6 +201,7 @@ export function Player({
       hls.on(Hls.Events.INIT_PTS_FOUND, (_, data) => skipper.found(data))
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal || !hls) return
+        if (giveUpRef.current()) return
         if (!recovered) {
           recovered = true
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
@@ -232,6 +250,8 @@ export function Player({
       live = false
       window.clearInterval(stuckTimer)
       window.clearTimeout(bootTimer)
+      window.clearTimeout(startTimer)
+      giveUpRef.current = () => false
       hls?.destroy()
       stops.forEach((stop) => stop())
       video.removeAttribute('src')
@@ -299,7 +319,8 @@ export function Player({
           const video = event.currentTarget
           const time = video.currentTime
           setCurrent(time)
-          onTime(time)
+          // 换线路拆掉旧画面时也会触发一次、位置归零。还没有画面就不记进度，免得冲掉续播位置。
+          if (video.readyState > 0) onTime(time)
         }}
         onLoadedMetadata={(event) => {
           const video = event.currentTarget
@@ -328,7 +349,7 @@ export function Player({
         }}
         onEnded={finish}
         onError={() => {
-          if (episode.url) setError('画面没有回应。换一条线路，或稍后再来。')
+          if (episode.url && !giveUpRef.current()) setError('画面没有回应。换一条线路，或稍后再来。')
         }}
         onClick={toggle}
       />
