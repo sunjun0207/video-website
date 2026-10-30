@@ -13,3 +13,6 @@ VITE_VOD_TARGET=https://www.dushe05.com
 VITE_IMG_TARGET=https://vres.wkcyvs.cn
 VITE_IMG_A_TARGET=https://103.39.111.180:51050
 VITE_IMG_B_TARGET=https://103.39.111.184:51050
+
+# 片库备用域名，逗号分隔。只有 nginx 用：片库回 404 / 5xx 或连不上时依次改走这些地址。
+VITE_VOD_BACKUP_TARGETS=https://www.dushe06.com,https://www.dushe07.com

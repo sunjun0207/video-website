@@ -15,7 +15,7 @@ import {
   type DownloadProgress,
   type SavedFile,
 } from '../lib/downloadMedia'
-import { ensureDetail, ensurePlayUrl, prefetchPlay } from '../lib/source'
+import { dropPlayLine, ensureDetail, ensurePlayUrl, prefetchPlay } from '../lib/source'
 import { historyOf, rememberPlay } from '../lib/storage'
 import type { VideoItem } from '../lib/types'
 
@@ -23,6 +23,8 @@ import type { VideoItem } from '../lib/types'
 const NEXT_PREFETCH_LEAD = 90
 /** 刚开播的前这么多秒不探下一集，不和这一集抢带宽。 */
 const NEXT_PREFETCH_AFTER = 20
+/** 自动挑的线路开不了播时，一集最多自动换这么多次。 */
+const MAX_SWITCH = 2
 
 function formatSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -54,6 +56,9 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
   const [playUrl, setPlayUrl] = useState('')
   const [readyKey, setReadyKey] = useState('')
   const [lineName, setLineName] = useState('')
+  const [playPath, setPlayPath] = useState('')
+  /** 这一集开播时连不上、已经自动换掉的线路。 */
+  const [dropped, setDropped] = useState<{ key: string; paths: string[] }>({ key: '', paths: [] })
   const [error, setError] = useState('')
   const [download, setDownload] = useState<DownloadProgress | null>(null)
   const [downloadPaused, setDownloadPaused] = useState(false)
@@ -72,6 +77,8 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
   const resumeAt = history && history.ep === index ? history.time : 0
   const forced = pick && pick.id === id && pick.ep === index ? pick.path : ''
   const requestKey = `${id}:${index}:${forced}`
+  const skipped = dropped.key === requestKey ? dropped.paths : []
+  const skipKey = skipped.join('|')
   const activeUrl = readyKey === requestKey ? playUrl : ''
 
   useEffect(() => {
@@ -101,13 +108,14 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
       .then((video) => {
         if (!live) return null
         setItem(video)
-        return ensurePlayUrl(id, index, forced)
+        return ensurePlayUrl(id, index, forced, skipKey ? skipKey.split('|') : [])
       })
       .then((result) => {
         if (!live || !result) return
         setItem(getVideo(id))
         setPlayUrl(result.url)
         setLineName(result.line)
+        setPlayPath(result.playPath)
         setReadyKey(requestKey)
       })
       .catch((reason: unknown) => {
@@ -116,7 +124,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
     return () => {
       live = false
     }
-  }, [id, index, forced, requestKey])
+  }, [id, index, forced, requestKey, skipKey])
 
   useEffect(() => {
     if (!item) return
@@ -137,6 +145,15 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
     if (now - savedAt.current < 1500) return
     savedAt.current = now
     rememberPlay(item, index, time)
+  }
+
+  /** 自动挑的线路开不了播，就记下它、另挑一条。用户点名的线路不换。 */
+  const switchLine = () => {
+    if (forced || !playPath || skipped.length >= MAX_SWITCH) return false
+    dropPlayLine(id, index, playPath, playUrl)
+    setDropped({ key: requestKey, paths: [...skipped, playPath] })
+    setReadyKey('')
+    return true
   }
 
   const goNext = () => {
@@ -221,6 +238,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
             onDownload={download === null ? startDownload : toggleDownload}
             onTime={remember}
             onEnded={goNext}
+            onStartFail={switchLine}
             mediaRef={mediaRef}
           />
           <div className="play-copy">

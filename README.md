@@ -57,9 +57,12 @@ npm run preview
 | `VITE_VOD_TARGET` | 片库页面，默认 `https://www.dushe05.com` |
 | `VITE_IMG_TARGET` | 封面图 |
 | `VITE_IMG_A_TARGET` / `VITE_IMG_B_TARGET` | 封面备用地址 |
+| `VITE_VOD_BACKUP_TARGETS` | 片库备用域名，逗号分隔。只有 nginx 用：片库回 404 / 5xx 或连不上时依次改走 |
 | `VITE_DEV_PORT` | 开发端口，默认 `5175` |
 
 和音乐官网、video-h5 同时部署时，用 `HTTP_PORT` / `HTTPS_PORT` 把生产端口错开。
+
+不用 Docker、直接用宿主机 nginx 时，片库备用域名照 `docker/host-nginx/vod-backups.conf` 开头的说明加进站点配置。
 
 ## 技术栈
 
