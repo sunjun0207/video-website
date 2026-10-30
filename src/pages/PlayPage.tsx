@@ -119,7 +119,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
         setReadyKey(requestKey)
       })
       .catch((reason: unknown) => {
-        if (live) setError(friendlyError(reason, '这一段还没到来。'))
+        if (live) setError(friendlyError(reason, '播放遇到一点问题，换条线路再试试。'))
       })
     return () => {
       live = false
@@ -133,7 +133,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
   }, [item, index, onLibraryChange, resumeAt])
 
   if (error && !item) return <p className="note">{error}</p>
-  if (!item || !episode) return <LoadingPane kind="play" title="正在加载中…" />
+  if (!item || !episode) return <LoadingPane kind="play" title="正在为你加载精彩内容…" />
 
   const remember = (time: number) => {
     const left = (mediaRef.current?.duration ?? Number.NaN) - time
@@ -214,14 +214,14 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
         setDownloadPaused(false)
         setDownload(null)
         if (controller.signal.aborted || reason instanceof DownloadCancelled) return
-        setDownloadError(friendlyError(reason, '这次没有下载下来。'))
+        setDownloadError(friendlyError(reason, '下载遇到一点问题，稍后再试试。'))
       })
   }
 
   return (
     <>
       <p className="crumb">
-        <a href="#/discover">发现影片</a>
+        <a href="#/discover">首页</a>
         <span>/</span>
         <a href={`#/detail/${item.id}`}>{item.title}</a>
         <span>/</span>
@@ -294,7 +294,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
             </div>
             {downloadError ? <p className="note">{downloadError}</p> : null}
             {download === null && saved && !canReveal(saved) ? (
-              <p className="note">文件交给了浏览器保存，在浏览器的下载列表（Ctrl+J）里点“在文件夹中显示”就能打开所在位置。</p>
+              <p className="note">文件已经开始保存。按 Ctrl+J 打开下载列表，点“在文件夹中显示”就能找到它。</p>
             ) : null}
           </div>
           {episode.lines && episode.lines.length > 1 ? (
@@ -323,7 +323,7 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
           </div>
         </aside>
       </div>
-      <h2 className="block-title">也许你也想看</h2>
+      <h2 className="block-title">猜你喜欢</h2>
       <PosterGrid items={relatedVideos(item.id, 5)} />
     </>
   )

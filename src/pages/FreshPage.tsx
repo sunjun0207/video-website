@@ -14,8 +14,8 @@ function FreshBody() {
   return (
     <>
       <header className="page-intro">
-        <h1>新片</h1>
-        <p>按年份从近到远排开。年份未知的片子会跟在后面。</p>
+        <h1>最新上线</h1>
+        <p>新鲜内容，抢先一步发现。刚上线的排在最前面。</p>
       </header>
       <PosterGrid items={freshVideos()} />
     </>

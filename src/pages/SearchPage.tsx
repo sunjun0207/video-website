@@ -40,7 +40,7 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
         if (live) setItems(list)
       })
       .catch((reason: unknown) => {
-        if (live && !known) setError(friendlyError(reason, '搜索这会儿没有回应，过一会儿再试。'))
+        if (live && !known) setError(friendlyError(reason, '网络开了个小差，请稍后再试。'))
       })
     return () => {
       live = false
@@ -79,7 +79,7 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
     <>
       <header className="search-hero">
         <h1>搜索</h1>
-        <p>按片名或演员找。输入时会联想片名，点进去再返回会停在刚才那一条。</p>
+        <p>搜一搜，发现更多精彩。片名、演员都能搜，边输入边联想。</p>
         <div className="search-box" ref={boxRef}>
           <form
             onSubmit={(event) => {
@@ -96,13 +96,13 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
               onCompositionStart={() => setComposing(true)}
               onCompositionEnd={() => setComposing(false)}
               onFocus={() => setSuggestOpen(true)}
-              placeholder="搜索片名、演员"
+              placeholder="搜一搜，发现更多精彩"
               aria-label="搜索"
               aria-autocomplete="list"
               aria-expanded={panelOpen}
             />
             <button className="btn" type="submit">
-              搜索
+              开始探索
             </button>
           </form>
           {panelOpen ? (
@@ -141,13 +141,13 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
             <>
               <p className="note search-pending">
                 <span className="spin" />
-                <span>先列出已经知道的，正在片库里找更多「{q}」…</span>
+                <span>先看看这些，正在为你搜索更多「{q}」…</span>
               </p>
               <PosterGrid items={local} onOpen={(item) => setSearchAnchor(q, item.id)} />
             </>
           ) : null}
-          {items === null && !error && !local.length ? <LoadingPane kind="search" title={`正在片库里找「${q}」…`} /> : null}
-          {items && items.length === 0 ? <p className="note">没有找到和「{q}」有关的片子。</p> : null}
+          {items === null && !error && !local.length ? <LoadingPane kind="search" title={`正在为你搜索「${q}」…`} /> : null}
+          {items && items.length === 0 ? <p className="note">没有找到「{q}」相关内容，换个关键词试试。</p> : null}
           {items && items.length > 0 ? (
             <PosterGrid
               items={items}
@@ -157,7 +157,7 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
           ) : null}
         </section>
       ) : (
-        <p className="note">输入一个片名，或一个忽然想起的名字。</p>
+        <p className="note">输入片名或演员，开始探索吧。</p>
       )}
     </>
   )

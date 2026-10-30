@@ -41,6 +41,8 @@ const PROBE_LIMIT = 20_000
 const MIN_EPISODE_SECONDS = 30
 /** 片库偶尔整站回 404、5xx 或 CDN 默认页，网络也会断一下，多半几秒就好。依次隔这么久再试。 */
 const PAGE_RETRY = [1000, 3000]
+/** 频道页按上架先后排，靠前只说明新、不说明热。热度给得比首页各栏低，“热门”才是片库首页推的那些。 */
+const CHANNEL_PAGE_OFFSET = 500
 
 type LineHealth = Record<string, { ok?: number; bad?: number }>
 /** 挑中的线路：播放地址、线路名，以及它在片库里的播放页。 */
@@ -56,6 +58,8 @@ const playInflight = new Map<string, Promise<PlayChoice>>()
 const preferredLine = new Map<string, string>()
 /** 开播时连不上的片源地址。不同线路常给同一个地址，那些线路也一样播不了。 */
 const deadMedia = new Set<string>()
+/** 焦点图和混排栏目里的片子，频道是猜的。频道页或标明了频道的栏目里见到同一部时，以那边为准。 */
+const guessed = new WeakSet<VideoItem>()
 
 function decode(text: string): string {
   return text
@@ -66,6 +70,15 @@ function decode(text: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#(\d+);/g, (_, n: string) => String.fromCharCode(Number(n)))
     .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** 简介里夹着转义过的 <br>、<p>：按换行留下分段，其余标签去掉。 */
+function summaryText(raw: string): string {
+  return decode(raw)
+    .replace(/<br\s*\/?>|<\/?p\b[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s*\n\s*/g, '\n')
     .trim()
 }
 
@@ -147,7 +160,7 @@ function passChallenge(html: string): Promise<void> {
   solving ??= Promise.resolve()
     .then(() => {
       const solved = solveChallenge(html)
-      if (!solved) throw new Error('片库暂时没有打开')
+      if (!solved) throw new Error('网络开了个小差，请稍后再试')
       document.cookie = `cdndefend_js_cookie=${solved}; path=/api-video-pomelo7-server/vod`
       cookieEpoch += 1
     })
@@ -186,7 +199,7 @@ async function readPage(path: string, signal?: AbortSignal): Promise<string> {
       const response = await fetch(vodUrl(path), { credentials: 'same-origin', signal })
       return { response, html: await response.text() }
     } catch {
-      throw new PassingFailure('片库这会儿没有连上。')
+      throw new PassingFailure('网络开了个小差，请稍后再试')
     }
   }
   const epoch = cookieEpoch
@@ -201,7 +214,7 @@ async function readPage(path: string, signal?: AbortSignal): Promise<string> {
   }
   const { status } = response
   const passing = status === 404 || status === 429 || (status >= 500 && status < 600) || isDefaultSite(html)
-  throw passing ? new PassingFailure('片库暂时没有打开') : new Error('片库暂时没有打开')
+  throw passing ? new PassingFailure('网络开了个小差，请稍后再试') : new Error('网络开了个小差，请稍后再试')
 }
 
 async function fetchHtml(path: string, signal?: AbortSignal): Promise<string> {
@@ -226,7 +239,15 @@ function visibleTitle(block: string): string {
   return ''
 }
 
-function parseCards(html: string, channel: ChannelId, offset = 0): VideoItem[] {
+/** 混排栏目没标频道，按角标认：写着几期、纪录片的是综艺纪录，写着几集、完结的是剧，其余算电影。 */
+function channelFromBadge(badge: string): ChannelId {
+  if (/期|纪录/.test(badge)) return 'variety'
+  if (/集|完结/.test(badge)) return 'tv'
+  return 'movie'
+}
+
+/** channel 为 null：混排栏目，每部按角标猜。 */
+function parseCards(html: string, channel: ChannelId | null, offset = 0): VideoItem[] {
   const items: VideoItem[] = []
   const re = /<a href="\/detail\/(\d+)\.html" class="v-item">([\s\S]*?)<\/a>/g
   let index = offset
@@ -241,31 +262,31 @@ function parseCards(html: string, channel: ChannelId, offset = 0): VideoItem[] {
       .find((item) => item.includes('/vod1/') || item.includes('/cover/'))
     const scoreText = block.match(/豆瓣:\s*([0-9.]+)/)?.[1]
     const badge = decode((block.match(/<div class="v-item-bottom">[\s\S]*?<span>\s*([^<]+?)\s*<\/span>/) || [])[1] || '')
-    items.push(
-      blankItem({
-        id,
-        title,
-        channel,
-        cover: coverUrl(cover || ''),
-        score: scoreText ? Number(scoreText) : 0,
-        hot: 1000 - index,
-        badge: badge || undefined,
-        updateText: badge || '正片',
-        featured: false,
-      }),
-    )
+    const item = blankItem({
+      id,
+      title,
+      channel: channel ?? channelFromBadge(badge),
+      cover: coverUrl(cover || ''),
+      score: scoreText ? Number(scoreText) : 0,
+      hot: 1000 - index,
+      badge: badge || undefined,
+      updateText: badge || '正片',
+      featured: false,
+    })
+    if (!channel) guessed.add(item)
+    items.push(item)
     index += 1
   }
   return items
 }
 
-/** 首页按栏目读：栏目链到哪个频道、或标题写明是哪一类，片子就先归到那里；推荐、最近更新这类混排栏目先记作电影，等频道页回来再纠正。 */
+/** 首页按栏目读：栏目链到哪个频道、或标题写明是哪一类，片子就归到那里；推荐、最近更新这类混排栏目按角标猜。 */
 function parseHome(html: string): VideoItem[] {
   let items: VideoItem[] = []
   for (const section of html.split('<div class="section-header">').slice(1)) {
     const title = decode((section.match(/<div class="section-header-title">([^<]*)/) || [])[1] || '')
     const channelNo = (section.match(/<a href="\/channel\/(\d+)\.html" class="section-header-more"/) || [])[1]
-    const channel = CHANNEL_BY_NO[channelNo || ''] || SECTION_CHANNELS.find(([pattern]) => pattern.test(title))?.[1] || 'movie'
+    const channel = CHANNEL_BY_NO[channelNo || ''] || SECTION_CHANNELS.find(([pattern]) => pattern.test(title))?.[1] || null
     items = merge(items, parseCards(section, channel, items.length))
   }
   return items
@@ -278,22 +299,22 @@ function parseCarousel(html: string): VideoItem[] {
     const block = match[2]
     const title = decode((block.match(/<div class="carousel-item-title">([^<]*)<\/div>/) || [])[1] || '')
     if (!title) continue
-    const summary = decode((block.match(/<div class="carousel-item-desc">([\s\S]*?)<\/div>/) || [])[1] || '')
+    const summary = summaryText((block.match(/<div class="carousel-item-desc">([\s\S]*?)<\/div>/) || [])[1] || '')
     const cover = (block.match(/data-original="([^"]+)"/) || [])[1] || ''
     const tags = [...block.matchAll(/<span class="tag">([^<]+)<\/span>/g)].map((item) => decode(item[1]))
-    items.push(
-      blankItem({
-        id: match[1],
-        title,
-        channel: 'movie',
-        cover: coverUrl(cover),
-        summary,
-        badge: tags[0] || '焦点',
-        updateText: tags[0] || '正片',
-        featured: true,
-        hot: 2000 - items.length,
-      }),
-    )
+    const item = blankItem({
+      id: match[1],
+      title,
+      channel: 'movie',
+      cover: coverUrl(cover),
+      summary,
+      badge: tags[0] || '焦点',
+      updateText: tags[0] || '正片',
+      featured: true,
+      hot: 2000 - items.length,
+    })
+    guessed.add(item)
+    items.push(item)
   }
   return items
 }
@@ -353,7 +374,7 @@ function parseDetail(html: string, id: string): VideoItem {
   const year = Number(yearTag || (html.match(/首映:[\s\S]*?<div class="detail-info-row-main">(\d{4})/) || [])[1] || 0)
   const region = tags.find((item) => item !== yearTag && !/^\d{4}$/.test(item) && item.length <= 8) || ''
   const genres = tags.filter((item) => item !== yearTag && item !== region)
-  const summary = decode((html.match(/<div class="detail-desc">[\s\S]*?<p>([\s\S]*?)<\/p>/) || [])[1] || '')
+  const summary = summaryText((html.match(/<div class="detail-desc">[\s\S]*?<p>([\s\S]*?)<\/p>/) || [])[1] || '')
   const director = decode((html.match(/导演:[\s\S]*?<div class="detail-info-row-main">([\s\S]*?)<\/div>/) || [])[1] || '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
@@ -436,7 +457,7 @@ function parseSearch(html: string): VideoItem[] {
       .split(',')
       .map((item) => item.trim())
       .filter(Boolean)
-    const summary = decode((block.match(/<div class="desc">([\s\S]*?)<\/div>/) || [])[1] || '')
+    const summary = summaryText((block.match(/<div class="desc">([\s\S]*?)<\/div>/) || [])[1] || '')
     const cover = [...block.matchAll(/data-original="([^"]+)"/g)].map((item) => item[1]).find((item) => item.includes('/vod1/'))
     items.push(
       blankItem({
@@ -470,7 +491,10 @@ function merge(base: VideoItem[], extra: VideoItem[]): VideoItem[] {
     if (!prev.score && item.score) prev.score = item.score
     if (item.featured) prev.featured = true
     if (item.hot > prev.hot) prev.hot = item.hot
-    if (item.channel && prev.channel === 'movie' && item.channel !== 'movie') prev.channel = item.channel
+    if (item.channel !== prev.channel && guessed.has(prev) && !guessed.has(item)) {
+      prev.channel = item.channel
+      guessed.delete(prev)
+    }
   }
   return [...map.values()]
 }
@@ -665,7 +689,9 @@ export async function loadHome(onPart: (videos: VideoItem[]) => void): Promise<V
     ['/', ...CHANNELS.map((channel) => channel.path)].map(async (path, index) => {
       try {
         const html = await fetchHtml(path)
-        parts[index] = index ? parseCards(html, CHANNELS[index - 1].id) : merge(parseCarousel(html), parseHome(html))
+        parts[index] = index
+          ? parseCards(html, CHANNELS[index - 1].id, CHANNEL_PAGE_OFFSET)
+          : merge(parseCarousel(html), parseHome(html))
         onPart(combined())
       } catch (error) {
         failure ??= error
@@ -673,12 +699,12 @@ export async function loadHome(onPart: (videos: VideoItem[]) => void): Promise<V
     }),
   )
   const videos = combined()
-  if (!videos.length) throw failure ?? new Error('片库暂时没有打开')
+  if (!videos.length) throw failure ?? new Error('网络开了个小差，请稍后再试')
   return videos
 }
 
 export async function loadDetail(id: string): Promise<VideoItem> {
-  if (!/^\d+$/.test(id)) throw new Error('没有这部片子')
+  if (!/^\d+$/.test(id)) throw new Error('没有找到这部作品')
   return parseDetail(await fetchHtml(`/detail/${id}.html`), id)
 }
 

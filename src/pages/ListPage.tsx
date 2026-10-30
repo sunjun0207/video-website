@@ -7,7 +7,7 @@ import { SHELVES } from '../lib/catalog'
 export function ListPage({ id }: { id: string }) {
   const shelf = SHELVES.find((item) => item.id === id)
   if (!shelf) {
-    return <EmptyState title="没有这张片单。" href="#/lists" action="查看全部片单" />
+    return <EmptyState title="没有找到这张片单" hint="去看看别的片单吧。" href="#/lists" action="查看全部片单" />
   }
   return (
     <CatalogGate>
