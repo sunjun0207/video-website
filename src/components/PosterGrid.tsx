@@ -10,7 +10,7 @@ export function PosterGrid({
   anchorId?: string
   onOpen?: (item: VideoItem) => void
 }) {
-  if (!items.length) return <p className="note">这一栏还是空的。</p>
+  if (!items.length) return <p className="note">暂时还没有内容，去发现更多精彩吧。</p>
   return (
     <div className="poster-grid">
       {items.map((item) => (

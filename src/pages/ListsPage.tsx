@@ -15,7 +15,7 @@ function ListsBody() {
     <>
       <header className="page-intro">
         <h1>片单</h1>
-        <p>按心情整理的几张片单。点进去，就是这一类片子。</p>
+        <p>按心情挑一张，点进去一路刷，根本停不下来。</p>
       </header>
       <div className="shelf-grid">
         {SHELVES.map((shelf) => {

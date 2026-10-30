@@ -15,7 +15,7 @@ function ChannelsBody() {
     <>
       <header className="page-intro">
         <h1>频道</h1>
-        <p>电影、连续剧、动漫、综艺纪录和短剧。进去之后可以按类型、地区和年份再筛一次。</p>
+        <p>电影、连续剧、动漫、综艺纪录、短剧，总有一款对你胃口。点进去还能按类型、地区、年份挑一挑。</p>
       </header>
       <div className="channel-grid">
         {CHANNELS.map((channel) => {

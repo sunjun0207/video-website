@@ -7,7 +7,7 @@ export function documentTitle(route: Route) {
   const base = import.meta.env.VITE_APP_TITLE || PRODUCT
   switch (route.name) {
     case 'discover':
-      return `${base} - 发现影片`
+      return `${base} - 好看的，都在这里`
     case 'toplist': {
       const chart = CHARTS.find((item) => item.id === route.id) ?? CHARTS[0]
       return `${chart.title} - 排行榜 - ${base}`
@@ -25,7 +25,7 @@ export function documentTitle(route: Route) {
       return channel ? `${channel.name} - 频道 - ${base}` : `频道 - ${base}`
     }
     case 'fresh':
-      return `新片 - ${base}`
+      return `最新上线 - ${base}`
     case 'detail':
     case 'play': {
       const item = route.id ? getVideo(route.id) : undefined
@@ -40,6 +40,6 @@ export function documentTitle(route: Route) {
     case 'about':
       return `关于 - ${base}`
     default:
-      return `未找到页面 - ${base}`
+      return `页面走丢了 - ${base}`
   }
 }

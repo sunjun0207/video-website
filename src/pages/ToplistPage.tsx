@@ -18,7 +18,7 @@ function ToplistBody({ id, title, desc }: { id: 'hot' | 'new' | 'score'; title: 
     <>
       <header className="page-intro">
         <h1>排行榜</h1>
-        <p>三张榜：热播、高分、新片。点开一部，就可以接着看。</p>
+        <p>爆款热播、高分推荐、最新上线，三张榜单帮你找到下一部心头好。</p>
       </header>
       <div className="toplist-layout">
         <aside className="side-list">

@@ -64,7 +64,32 @@ export function shelfVideos(id: string): VideoItem[] {
 }
 
 export function freshVideos(): VideoItem[] {
-  return [...videos].sort((a, b) => b.year - a.year || b.hot - a.hot)
+  return [...videos].sort(sorter('new'))
+}
+
+/** 热门推荐里每个频道最多这么多部，免得全是电影。 */
+const HOT_PER_CHANNEL = 2
+
+/** 首页从上到下：焦点图、热门推荐、各频道。上面放过的片子，下面不再出现。 */
+export function homeShelves(size = 5) {
+  const shown = new Set(heroVideos().map((item) => item.id))
+  const perChannel = new Map<ChannelId, number>()
+  const hot: VideoItem[] = []
+  for (const item of rankVideos(videos.length)) {
+    if (hot.length >= size) break
+    const count = perChannel.get(item.channel) || 0
+    if (shown.has(item.id) || count >= HOT_PER_CHANNEL) continue
+    perChannel.set(item.channel, count + 1)
+    hot.push(item)
+  }
+  for (const item of hot) shown.add(item.id)
+  const channels = CHANNELS.map((channel) => ({
+    ...channel,
+    items: listByChannel(channel.id)
+      .filter((item) => !shown.has(item.id))
+      .slice(0, size),
+  }))
+  return { hot, channels }
 }
 
 export type SuggestHit = {
@@ -99,10 +124,6 @@ export function localMatches(keyword: string, limit = 12): VideoItem[] {
     .slice(0, limit)
 }
 
-export function hotVideos(limit = 10): VideoItem[] {
-  return rankVideos(limit)
-}
-
 export function relatedVideos(id: string, limit = 6): VideoItem[] {
   const current = getVideo(id)
   if (!current) return rankVideos(limit)
@@ -135,7 +156,8 @@ export function metaLine(item: VideoItem): string {
 }
 
 function sorter(sort: SortKey) {
-  if (sort === 'new') return (a: VideoItem, b: VideoItem) => b.year - a.year || b.hot - a.hot
+  // 片库编号越大上架越晚。列表页不给年份，按年份排就和按热度排一样了。
+  if (sort === 'new') return (a: VideoItem, b: VideoItem) => (Number(b.id) || 0) - (Number(a.id) || 0)
   if (sort === 'score') return (a: VideoItem, b: VideoItem) => b.score - a.score || b.hot - a.hot
   return (a: VideoItem, b: VideoItem) => b.hot - a.hot
 }
