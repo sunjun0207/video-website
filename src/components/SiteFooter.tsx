@@ -6,10 +6,10 @@ export function SiteFooter() {
       <div className="wrap footer-grid">
         <div>
           <p className="footer-brand">jun.sun</p>
-          <p>把喜欢的片子，慢慢看完。</p>
+          <p>好剧、好片、好心情，每天都有新惊喜。</p>
         </div>
         <div>
-          <h2>发现影片</h2>
+          <h2>发现精彩</h2>
           <ul>
             <li>
               <a href="#/discover">推荐</a>
@@ -24,7 +24,7 @@ export function SiteFooter() {
               <a href="#/channels">频道</a>
             </li>
             <li>
-              <a href="#/fresh">新片</a>
+              <a href="#/fresh">最新上线</a>
             </li>
           </ul>
         </div>

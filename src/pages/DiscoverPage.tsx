@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { CatalogGate } from '../components/CatalogGate'
 import { Poster, usePrefetchDetail } from '../components/Poster'
 import { SectionHead } from '../components/SectionHead'
-import { heroVideos, hotVideos, listByChannel, rankVideos } from '../lib/api'
-import { CHANNELS, CHARTS } from '../lib/catalog'
-import { getHistory, type WatchRecord } from '../lib/storage'
+import { heroVideos, homeShelves, rankVideos } from '../lib/api'
+import { CHARTS } from '../lib/catalog'
+import { PRODUCT } from '../lib/site'
+import { getHistory, historyOf, type WatchRecord } from '../lib/storage'
 
 const TONES = ['ink', 'teal', 'sand'] as const
 
@@ -48,8 +49,11 @@ function Banner() {
             <p className="kicker">{item.badge || '推荐'}</p>
             <h2>{item.title}</h2>
             <p>{item.summary || item.updateText}</p>
-            <a className={item.cover || TONES[i % TONES.length] !== 'sand' ? 'btn btn-light' : 'btn'} href={`#/detail/${item.id}`}>
-              去看看
+            <a
+              className={item.cover || TONES[i % TONES.length] !== 'sand' ? 'btn btn-light' : 'btn'}
+              href={`#/play/${item.id}/${historyOf(item.id)?.ep ?? 0}`}
+            >
+              立即观看
             </a>
           </div>
           <div className="banner-frame" aria-hidden="true" />
@@ -93,7 +97,7 @@ function RecentItem({ item }: { item: WatchRecord }) {
       {item.cover ? <img src={item.cover} alt="" loading="lazy" decoding="async" /> : <span />}
       <span>
         <strong>{item.title}</strong>
-        <em>{item.ep > 0 ? `第 ${item.ep + 1} 段` : '正片'}</em>
+        <em>{item.ep > 0 ? `第 ${item.ep + 1} 集` : '正片'}</em>
       </span>
     </a>
   )
@@ -109,17 +113,22 @@ export function DiscoverPage({ libraryVersion }: { libraryVersion: number }) {
 
 function DiscoverBody({ libraryVersion }: { libraryVersion: number }) {
   const recent = useMemo(() => getHistory().slice(0, 6), [libraryVersion])
+  const shelves = homeShelves()
   return (
     <>
-      <h1 className="sr-only">发现影片</h1>
+      <h1 className="sr-only">{PRODUCT} - 好看的，都在这里</h1>
       <div className="home-top">
         <Banner />
         <aside className="client-card">
-          <p className="kicker">观影</p>
-          <h2>jun.sun</h2>
-          <p>有些片子，只适合在灯火安静下来的时候遇见。搜一个片名，或一个忽然想起的人。</p>
+          <p className="kicker">{PRODUCT}</p>
+          <h2>
+            好看的，
+            <br />
+            都在这里！
+          </h2>
+          <p>热门短剧、精彩影视、潮流视频，每一次打开都有新发现。精彩不设限，快乐不打烊。</p>
           <a className="btn btn-light" href="#/search">
-            搜索影片
+            马上探索
           </a>
           <a className="text-link" href="#/guide">
             观影说明
@@ -128,9 +137,9 @@ function DiscoverBody({ libraryVersion }: { libraryVersion: number }) {
       </div>
 
       <section>
-        <SectionHead title="最近看过" more="#/favorites" moreLabel="收藏" />
+        <SectionHead title="最近看过" desc="接着看，精彩别错过" more="#/favorites" moreLabel="收藏" />
         {recent.length === 0 ? (
-          <p className="note">还没有看过的片子。先打开一部，看过的会留在这里。</p>
+          <p className="note">还没有观看记录，去发现更多精彩吧。</p>
         ) : (
           <div className="recent-list">
             {recent.map((item) => (
@@ -140,23 +149,24 @@ function DiscoverBody({ libraryVersion }: { libraryVersion: number }) {
         )}
       </section>
 
-      <section>
-        <SectionHead title="此刻想看" more="#/toplist/hot" />
-        <div className="poster-grid">
-          {hotVideos(5).map((item) => (
-            <Poster key={item.id} item={item} />
-          ))}
-        </div>
-      </section>
+      {shelves.hot.length ? (
+        <section>
+          <SectionHead title="热门推荐" desc="大家都在看，精彩不容错过" more="#/toplist/hot" />
+          <div className="poster-grid">
+            {shelves.hot.map((item) => (
+              <Poster key={item.id} item={item} />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
-      {CHANNELS.map((channel) => {
-        const items = listByChannel(channel.id).slice(0, 5)
-        if (!items.length) return null
+      {shelves.channels.map((channel) => {
+        if (!channel.items.length) return null
         return (
           <section key={channel.id}>
-            <SectionHead title={channel.name} more={`#/channel/${channel.id}`} />
+            <SectionHead title={channel.name} desc={channel.text} more={`#/channel/${channel.id}`} />
             <div className="poster-grid">
-              {items.map((item) => (
+              {channel.items.map((item) => (
                 <Poster key={item.id} item={item} />
               ))}
             </div>
@@ -165,7 +175,7 @@ function DiscoverBody({ libraryVersion }: { libraryVersion: number }) {
       })}
 
       <section>
-        <SectionHead title="编辑榜单" more="#/toplist" />
+        <SectionHead title="排行榜" desc="热度、口碑、新鲜度，一榜看尽" more="#/toplist" />
         <div className="billboard">
           {CHARTS.map((chart) => (
             <div key={chart.id} className="bill-col">
@@ -185,7 +195,6 @@ function DiscoverBody({ libraryVersion }: { libraryVersion: number }) {
             </div>
           ))}
         </div>
-        <p className="note">榜单按片库此刻的热度、分数和年份整理，方便你接着往下找。</p>
       </section>
     </>
   )

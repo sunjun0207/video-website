@@ -1,6 +1,7 @@
 import { CatalogGate } from '../components/CatalogGate'
 import { PosterGrid } from '../components/PosterGrid'
 import { channelFacets, channelName, queryChannel } from '../lib/api'
+import { CHANNELS } from '../lib/catalog'
 import { channelHash, type Route } from '../lib/route'
 import type { ChannelId, SortKey } from '../lib/types'
 
@@ -20,6 +21,7 @@ export function ChannelPage({ route }: { route: Route }) {
 }
 
 function ChannelBody({ channel, route }: { channel: ChannelId; route: Route }) {
+  const intro = CHANNELS.find((item) => item.id === channel)?.text
   const facets = channelFacets(channel)
   const items = queryChannel({
     channel,
@@ -37,7 +39,9 @@ function ChannelBody({ channel, route }: { channel: ChannelId; route: Route }) {
           <em>{channelName(channel)}</em>
         </p>
         <h1>{channelName(channel)}</h1>
-        <p>共 {items.length} 部。筛选项来自当前片库。</p>
+        <p>
+          {intro ? `${intro}。` : ''}共 {items.length} 部，挑一挑，总有一部对你胃口。
+        </p>
       </header>
       <FilterRow
         label="类型"

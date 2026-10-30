@@ -352,9 +352,23 @@ a {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  gap: 12px;
   margin: 32px 0 16px;
   padding-bottom: 8px;
   border-bottom: 2px solid var(--ink);
+}
+
+.section-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.section-title span {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .section-head h2,
@@ -376,6 +390,7 @@ a {
 
 .section-head a,
 .section-head button {
+  flex: none;
   color: var(--muted);
   text-decoration: none;
   font-size: 13px;
@@ -974,6 +989,10 @@ a {
 .detail-head p {
   margin: 0 0 10px;
   line-height: 1.75;
+}
+
+.detail-summary {
+  white-space: pre-line;
 }
 
 .detail-actions {

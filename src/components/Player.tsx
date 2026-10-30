@@ -208,7 +208,7 @@ export function Player({
           else hls.recoverMediaError()
           return
         }
-        setError('这一段暂时安静了，换一条线路，或稍后再来。')
+        setError('播放遇到一点问题，换条线路再试试。')
       })
     }
     if (episode.url.includes('.m3u8')) {
@@ -219,7 +219,7 @@ export function Player({
           else playNative()
         })
         .catch(() => {
-          if (live) setError('播放器没有加载上来，刷新页面再试一次。')
+          if (live) setError('播放器开了个小差，刷新页面再试试。')
         })
     } else {
       playNative()
@@ -349,7 +349,7 @@ export function Player({
         }}
         onEnded={finish}
         onError={() => {
-          if (episode.url && !giveUpRef.current()) setError('画面没有回应。换一条线路，或稍后再来。')
+          if (episode.url && !giveUpRef.current()) setError('播放遇到一点问题，换条线路再试试。')
         }}
         onClick={toggle}
       />
@@ -357,7 +357,7 @@ export function Player({
       {showLoading ? (
         <div className="stage-loading" role="status">
           <span className="stage-spin" />
-          <span>正在加载中…</span>
+          <span>正在为你加载精彩内容…</span>
         </div>
       ) : null}
       {showBuffering ? (

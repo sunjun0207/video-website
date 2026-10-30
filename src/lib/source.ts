@@ -131,7 +131,7 @@ export function ensurePlayUrl(id: string, ep: number, onlyPath = '', skip: strin
 async function resolvePlayUrl(id: string, ep: number, onlyPath: string, skip: string[]): Promise<PlayChoice> {
   const item = await ensureDetail(id)
   const episode = item.episodes[ep]
-  if (!episode) throw new Error('没有这一集')
+  if (!episode) throw new Error('没有找到这一集')
   const lines = (episode.lines?.length
     ? episode.lines
     : [{ label: episode.title, note: '', playPath: episode.playPath || '' }]
@@ -201,7 +201,7 @@ export function useCatalog() {
         if (live) setReady(true)
       })
       .catch((reason: unknown) => {
-        if (live) setError(friendlyError(reason, '片库这会儿没有连上。'))
+        if (live) setError(friendlyError(reason, '网络开了个小差，请稍后再试'))
       })
     return () => {
       live = false

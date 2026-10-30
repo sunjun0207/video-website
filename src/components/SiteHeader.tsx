@@ -76,7 +76,7 @@ export function SiteHeader({ route }: { route: Route }) {
         </a>
         <nav className="main-nav" aria-label="主导航">
           <a className={DISCOVER.has(route.name) ? 'active' : ''} href="#/discover">
-            发现影片
+            发现精彩
           </a>
           <a className={route.name === 'favorites' ? 'active' : ''} href="#/favorites">
             收藏
@@ -106,12 +106,12 @@ export function SiteHeader({ route }: { route: Route }) {
               onCompositionStart={() => setComposing(true)}
               onCompositionEnd={() => setComposing(false)}
               onFocus={() => setSuggestOpen(true)}
-              placeholder="搜索片名、演员"
+              placeholder="搜一搜，发现更多精彩"
               aria-label="搜索"
               aria-autocomplete="list"
               aria-expanded={panelOpen}
             />
-            <button type="submit">搜索</button>
+            <button type="submit">开始探索</button>
           </form>
           {panelOpen ? (
             <ul className="suggest-list" role="listbox">

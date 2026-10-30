@@ -25,7 +25,7 @@ export function DetailPage({ id, libraryVersion, onLibraryChange }: { id: string
         preloadPlayer()
       })
       .catch((reason: unknown) => {
-        if (live) setError(friendlyError(reason, '没有找到这部片子。'))
+        if (live) setError(friendlyError(reason, '网络开了个小差，请稍后再试。'))
       })
     return () => {
       live = false
@@ -33,7 +33,7 @@ export function DetailPage({ id, libraryVersion, onLibraryChange }: { id: string
   }, [id])
 
   if (error) return <p className="note">{error}</p>
-  if (!item) return <LoadingPane kind="detail" title="故事还在路上…" />
+  if (!item) return <LoadingPane kind="detail" title="正在为你加载精彩内容…" />
   const saved = isFavorite(item.id)
   const history = historyOf(item.id)
   const resumeEp = history?.ep ?? 0
@@ -42,7 +42,7 @@ export function DetailPage({ id, libraryVersion, onLibraryChange }: { id: string
   return (
     <>
       <p className="crumb">
-        <a href="#/discover">发现影片</a>
+        <a href="#/discover">首页</a>
         <span>/</span>
         <a href={`#/channel/${item.channel}`}>{channelName(item.channel)}</a>
         <span>/</span>
@@ -60,10 +60,10 @@ export function DetailPage({ id, libraryVersion, onLibraryChange }: { id: string
           <p className="meta">{metaLine(item)}{item.genres.length ? ` · ${item.genres.join(' / ')}` : ''}</p>
           {item.director ? <p>导演：{item.director}</p> : null}
           {item.actors.length ? <p>演职员：{item.actors.join('、')}</p> : null}
-          {item.summary ? <p>{item.summary}</p> : null}
+          {item.summary ? <p className="detail-summary">{item.summary}</p> : null}
           <div className="detail-actions">
             <a className="btn" href={`#/play/${item.id}/${resumeEp}`}>
-              {history ? '继续观看' : '开始观看'}
+              {history ? '接着看' : '立即观看'}
             </a>
             <button
               type="button"
@@ -73,12 +73,12 @@ export function DetailPage({ id, libraryVersion, onLibraryChange }: { id: string
                 onLibraryChange()
               }}
             >
-              {saved ? '已留下' : '留下它'}
+              {saved ? '已收藏' : '收下这份精彩'}
             </button>
           </div>
         </div>
       </section>
-      <h2 className="block-title">选一段</h2>
+      <h2 className="block-title">选集</h2>
       {item.episodes.length ? (
         <div className="ep-grid">
           {item.episodes.map((episode, index) => (
@@ -88,9 +88,9 @@ export function DetailPage({ id, libraryVersion, onLibraryChange }: { id: string
           ))}
         </div>
       ) : (
-        <p className="note">选集还在整理。</p>
+        <p className="note">选集正在更新，稍后再来看看。</p>
       )}
-      <h2 className="block-title">也许你也想看</h2>
+      <h2 className="block-title">猜你喜欢</h2>
       <PosterGrid items={relatedVideos(item.id)} />
     </>
   )
