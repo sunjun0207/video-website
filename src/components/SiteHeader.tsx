@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { SearchBrowse } from './SearchBrowse'
 import { searchHash, type Route } from '../lib/route'
 import { useLiveSuggest } from '../lib/suggest'
 import { addSearchHistory, clearSearchHistory, getSearchHistory } from '../lib/storage'
@@ -59,7 +60,7 @@ export function SiteHeader({ route }: { route: Route }) {
   }
 
   const typed = Boolean(keyword.trim())
-  const panelOpen = suggestOpen && (typed ? suggests.length > 0 || pending : history.length > 0)
+  const panelOpen = suggestOpen && (typed ? suggests.length > 0 || pending : true)
 
   return (
     <header className="site-header">
@@ -105,7 +106,10 @@ export function SiteHeader({ route }: { route: Route }) {
               }}
               onCompositionStart={() => setComposing(true)}
               onCompositionEnd={() => setComposing(false)}
-              onFocus={() => setSuggestOpen(true)}
+              onFocus={() => {
+                setHistory(getSearchHistory())
+                setSuggestOpen(true)
+              }}
               placeholder="搜一搜，发现更多精彩"
               aria-label="搜索"
               aria-autocomplete="list"
@@ -113,44 +117,34 @@ export function SiteHeader({ route }: { route: Route }) {
             />
             <button type="submit">开始探索</button>
           </form>
-          {panelOpen ? (
+          {panelOpen && !typed ? (
+            <div className="suggest-list suggest-browse">
+              <SearchBrowse
+                history={history}
+                onPick={go}
+                onClear={() => {
+                  clearSearchHistory()
+                  setHistory([])
+                }}
+              />
+            </div>
+          ) : null}
+          {panelOpen && typed ? (
             <ul className="suggest-list" role="listbox">
-              {keyword.trim() ? null : (
-                <li className="suggest-label">
-                  <span>搜索历史</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      clearSearchHistory()
-                      setHistory([])
-                    }}
-                  >
-                    清空
-                  </button>
-                </li>
-              )}
-              {typed && pending && suggests.length === 0 ? (
+              {pending && suggests.length === 0 ? (
                 <li className="suggest-label suggest-pending">
                   <span className="spin" />
                   <span>正在联想…</span>
                 </li>
               ) : null}
-              {typed
-                ? suggests.map((item) => (
-                    <li key={item.title}>
-                      <button type="button" role="option" onClick={() => go(item.title)}>
-                        <span>{item.title}</span>
-                        {item.hint ? <small>{item.hint}</small> : null}
-                      </button>
-                    </li>
-                  ))
-                : history.map((item) => (
-                    <li key={item}>
-                      <button type="button" role="option" onClick={() => go(item)}>
-                        {item}
-                      </button>
-                    </li>
-                  ))}
+              {suggests.map((item) => (
+                <li key={item.title}>
+                  <button type="button" role="option" onClick={() => go(item.title)}>
+                    <span>{item.title}</span>
+                    {item.hint ? <small>{item.hint}</small> : null}
+                  </button>
+                </li>
+              ))}
             </ul>
           ) : null}
         </div>

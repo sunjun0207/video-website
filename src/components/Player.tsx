@@ -23,6 +23,33 @@ type Props = {
 
 /** 开播这么久还一点画面都没缓冲上，就当这条线路连不上。探线路时它刚下得动，正常的线路用不了这么久。 */
 const START_LIMIT = 20_000
+/** 播放中不再碰画面，进度条就收起来。 */
+const CHROME_IDLE = 3_000
+
+function VolumeIcon({ muted, volume }: { muted: boolean; volume: number }) {
+  const level = muted || volume <= 0 ? 0 : volume < 0.34 ? 1 : volume < 0.67 ? 2 : 3
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M11 5 6 9H3v6h3l5 4V5z" strokeLinejoin="round" />
+      {level === 0 ? <path d="m16 9 5 6M21 9l-5 6" strokeLinecap="round" /> : null}
+      {level >= 1 ? <path d="M15.2 9.2a4.2 4.2 0 0 1 0 5.6" strokeLinecap="round" /> : null}
+      {level >= 2 ? <path d="M17.6 7a7.2 7.2 0 0 1 0 10" strokeLinecap="round" /> : null}
+      {level >= 3 ? <path d="M20 4.8a10.2 10.2 0 0 1 0 14.4" strokeLinecap="round" /> : null}
+    </svg>
+  )
+}
+
+function FullscreenIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      {active ? (
+        <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" strokeLinecap="round" strokeLinejoin="round" />
+      ) : (
+        <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" strokeLinecap="round" strokeLinejoin="round" />
+      )}
+    </svg>
+  )
+}
 
 function bufferedAhead(video: HTMLVideoElement) {
   let ahead = 0
@@ -103,6 +130,33 @@ export function Player({
   const [current, setCurrent] = useState(0)
   const [duration, setDuration] = useState(0)
   const [error, setError] = useState('')
+  const [chrome, setChrome] = useState(true)
+  const [fullscreenOn, setFullscreenOn] = useState(false)
+  const [volume, setVolume] = useState(1)
+  const [muted, setMuted] = useState(false)
+  const playingRef = useRef(false)
+  const chromeRef = useRef(true)
+  const overControls = useRef(false)
+  const controlsFocused = useRef(false)
+  const savedVolume = useRef(1)
+  const volumeRef = useRef(1)
+  const mutedRef = useRef(false)
+  const hideTimer = useRef(0)
+  const fullscreenActions = useRef({
+    onVideoClick: () => {},
+    toggle: () => {},
+    toggleMute: () => {},
+    fullscreen: () => {},
+    seek: (_value: number) => {},
+    changeVolume: (_value: number) => {},
+    onDownload: undefined as (() => void) | undefined,
+    scheduleHide: () => {},
+    clearHideTimer: () => {},
+  })
+  playingRef.current = playing
+  chromeRef.current = chrome
+  volumeRef.current = volume
+  mutedRef.current = muted
 
   onEndedRef.current = onEnded
   onStartFailRef.current = onStartFail
@@ -120,6 +174,8 @@ export function Player({
     setDuration(0)
     const video = videoRef.current
     if (!video || !episode.url) return
+    video.volume = mutedRef.current ? 0 : volumeRef.current
+    video.muted = mutedRef.current || volumeRef.current === 0
     let hls: Hls | undefined
     const stops: (() => void)[] = []
     let live = true
@@ -259,6 +315,120 @@ export function Player({
     }
   }, [episode.url])
 
+  const clearHideTimer = () => window.clearTimeout(hideTimer.current)
+  const hideBlocked = () => overControls.current || controlsFocused.current || !playingRef.current
+  const scheduleHide = () => {
+    clearHideTimer()
+    hideTimer.current = window.setTimeout(() => {
+      if (!hideBlocked()) setChrome(false)
+    }, CHROME_IDLE)
+  }
+
+  useEffect(() => {
+    const sync = () => {
+      const on = document.fullscreenElement === stageRef.current
+      setFullscreenOn(on)
+      if (on) setChrome(true)
+    }
+    document.addEventListener('fullscreenchange', sync)
+    return () => document.removeEventListener('fullscreenchange', sync)
+  }, [])
+
+  // 全屏元素里的点击到不了 React 根节点，控制条、进度和音量要在舞台上直接听。
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    const controls = stage.querySelector<HTMLElement>('.controls')
+    const inFullscreen = () => document.fullscreenElement === stage
+
+    const onClick = (event: MouseEvent) => {
+      if (!inFullscreen()) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const actions = fullscreenActions.current
+      if (target.closest('.controls')) {
+        const button = target.closest('button')
+        if (!button || button.matches(':disabled')) return
+        if (button.classList.contains('control-volume')) actions.toggleMute()
+        else if (button.classList.contains('control-fullscreen')) actions.fullscreen()
+        else if (button.classList.contains('control-download')) actions.onDownload?.()
+        else actions.toggle()
+        return
+      }
+      if (target.closest('.stage-center')) {
+        actions.toggle()
+        return
+      }
+      actions.onVideoClick()
+    }
+
+    const onInput = (event: Event) => {
+      if (!inFullscreen()) return
+      const target = event.target
+      if (!(target instanceof HTMLInputElement)) return
+      if (target.classList.contains('seek')) fullscreenActions.current.seek(Number(target.value))
+      else if (target.classList.contains('volume')) fullscreenActions.current.changeVolume(Number(target.value))
+    }
+
+    const onPointerMove = () => {
+      if (!inFullscreen() || !playingRef.current || !chromeRef.current) return
+      if (overControls.current || controlsFocused.current) return
+      fullscreenActions.current.scheduleHide()
+    }
+
+    const onEnter = () => {
+      if (!inFullscreen()) return
+      overControls.current = true
+      fullscreenActions.current.clearHideTimer()
+    }
+    const onLeave = () => {
+      if (!inFullscreen()) return
+      overControls.current = false
+      if (playingRef.current && chromeRef.current && !controlsFocused.current) fullscreenActions.current.scheduleHide()
+    }
+    const onFocusIn = () => {
+      if (!inFullscreen()) return
+      controlsFocused.current = true
+      setChrome(true)
+      fullscreenActions.current.clearHideTimer()
+    }
+    const onFocusOut = (event: FocusEvent) => {
+      if (!inFullscreen()) return
+      const next = event.relatedTarget
+      if (next instanceof Node && controls?.contains(next)) return
+      controlsFocused.current = false
+      if (playingRef.current && !overControls.current) fullscreenActions.current.scheduleHide()
+    }
+
+    stage.addEventListener('click', onClick, true)
+    stage.addEventListener('input', onInput, true)
+    stage.addEventListener('pointermove', onPointerMove)
+    controls?.addEventListener('pointerenter', onEnter)
+    controls?.addEventListener('pointerleave', onLeave)
+    controls?.addEventListener('focusin', onFocusIn)
+    controls?.addEventListener('focusout', onFocusOut)
+    return () => {
+      stage.removeEventListener('click', onClick, true)
+      stage.removeEventListener('input', onInput, true)
+      stage.removeEventListener('pointermove', onPointerMove)
+      controls?.removeEventListener('pointerenter', onEnter)
+      controls?.removeEventListener('pointerleave', onLeave)
+      controls?.removeEventListener('focusin', onFocusIn)
+      controls?.removeEventListener('focusout', onFocusOut)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!playing) {
+      clearHideTimer()
+      setChrome(true)
+      return
+    }
+    if (chrome && !hideBlocked()) scheduleHide()
+    else clearHideTimer()
+    return clearHideTimer
+  }, [playing, chrome])
+
   const toggle = () => {
     const video = videoRef.current
     if (!video) return
@@ -279,8 +449,60 @@ export function Player({
   const fullscreen = () => {
     const stage = stageRef.current
     if (!stage) return
-    if (document.fullscreenElement) void document.exitFullscreen()
+    if (document.fullscreenElement === stage) void document.exitFullscreen()
     else void stage.requestFullscreen().catch(() => undefined)
+  }
+
+  const changeVolume = (value: number) => {
+    const video = videoRef.current
+    const next = Math.min(1, Math.max(0, value))
+    if (next > 0) savedVolume.current = next
+    setVolume(next)
+    setMuted(next === 0)
+    if (!video) return
+    video.volume = next
+    video.muted = next === 0
+  }
+
+  const toggleMute = () => {
+    const video = videoRef.current
+    if (!video) return
+    if (video.muted || video.volume === 0) {
+      const restore = savedVolume.current > 0 ? savedVolume.current : 1
+      video.muted = false
+      video.volume = restore
+      setVolume(restore)
+      setMuted(false)
+      return
+    }
+    savedVolume.current = video.volume || savedVolume.current || 1
+    video.muted = true
+    setMuted(true)
+  }
+
+  const poke = () => {
+    if (!playingRef.current || !chromeRef.current || hideBlocked()) return
+    scheduleHide()
+  }
+
+  const onVideoClick = () => {
+    if (!playingRef.current) {
+      toggle()
+      return
+    }
+    setChrome((shown) => !shown)
+  }
+
+  fullscreenActions.current = {
+    onVideoClick,
+    toggle,
+    toggleMute,
+    fullscreen,
+    seek,
+    changeVolume,
+    onDownload,
+    scheduleHide,
+    clearHideTimer,
   }
 
   const finish = () => {
@@ -295,7 +517,7 @@ export function Player({
   const showPlay = !message && !showBuffering && (blocked || (played.current && !playing))
 
   return (
-    <div className="stage" ref={stageRef}>
+    <div className={chrome ? 'stage' : 'stage is-quiet'} ref={stageRef} onPointerMove={poke}>
       <video
         ref={videoRef}
         playsInline
@@ -351,7 +573,7 @@ export function Player({
         onError={() => {
           if (episode.url && !giveUpRef.current()) setError('播放遇到一点问题，换条线路再试试。')
         }}
-        onClick={toggle}
+        onClick={onVideoClick}
       />
       {message ? <div className="stage-error">{message}</div> : null}
       {showLoading ? (
@@ -371,12 +593,34 @@ export function Player({
           ▶
         </button>
       ) : null}
-      <div className="controls">
+      <div
+        className={chrome ? 'controls' : 'controls is-hidden'}
+        onPointerEnter={() => {
+          overControls.current = true
+          clearHideTimer()
+        }}
+        onPointerLeave={() => {
+          overControls.current = false
+          if (playingRef.current && chrome && !controlsFocused.current) scheduleHide()
+        }}
+        onFocus={() => {
+          controlsFocused.current = true
+          setChrome(true)
+          clearHideTimer()
+        }}
+        onBlur={(event) => {
+          const next = event.relatedTarget
+          if (next instanceof Node && event.currentTarget.contains(next)) return
+          controlsFocused.current = false
+          if (playingRef.current && !overControls.current) scheduleHide()
+        }}
+      >
         <button type="button" onClick={toggle} aria-label={playing ? '暂停' : '播放'}>
           {playing ? '❚❚' : '▶'}
         </button>
         <span className="time">{formatTime(current)}</span>
         <input
+          className="seek"
           type="range"
           min={0}
           max={duration || 0}
@@ -386,8 +630,28 @@ export function Player({
           onChange={(event) => seek(Number(event.target.value))}
         />
         <span className="time">{formatTime(duration)}</span>
-        <button type="button" onClick={fullscreen} aria-label="全屏">
-          全屏
+        <button
+          type="button"
+          className="control-volume"
+          aria-label={muted || volume === 0 ? '取消静音' : '静音'}
+          aria-pressed={muted || volume === 0}
+          onClick={toggleMute}
+        >
+          <VolumeIcon muted={muted} volume={volume} />
+        </button>
+        <input
+          className="volume"
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={muted ? 0 : volume}
+          aria-label="音量"
+          onChange={(event) => changeVolume(Number(event.target.value))}
+        />
+        <button type="button" className="control-fullscreen" onClick={fullscreen} aria-label={fullscreenOn ? '退出全屏' : '全屏'}>
+          <FullscreenIcon active={fullscreenOn} />
+          <span>{fullscreenOn ? '退出全屏' : '全屏'}</span>
         </button>
         {onDownload ? (
           <button type="button" className="control-download" disabled={downloadDisabled} onClick={onDownload}>
