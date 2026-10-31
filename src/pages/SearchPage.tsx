@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { LoadingPane } from '../components/LoadingPane'
 import { PosterGrid } from '../components/PosterGrid'
+import { SearchBrowse } from '../components/SearchBrowse'
 import { localMatches } from '../lib/api'
 import { searchHash } from '../lib/route'
 import { useLiveSuggest } from '../lib/suggest'
 import { friendlyError } from '../lib/friendlyError'
 import { cachedSearch, searchRemote } from '../lib/source'
-import { addSearchHistory, getSearchHistory, searchAnchor, setSearchAnchor } from '../lib/storage'
+import { addSearchHistory, clearSearchHistory, getSearchHistory, searchAnchor, setSearchAnchor } from '../lib/storage'
 import type { VideoItem } from '../lib/types'
 
 export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: number }) {
@@ -17,6 +18,7 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
   const [composing, setComposing] = useState(false)
   const [history, setHistory] = useState<string[]>(() => getSearchHistory())
   const boxRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const { suggests, pending } = useLiveSuggest(keyword, suggestOpen, composing)
   void libraryVersion
@@ -24,9 +26,11 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
   useEffect(() => {
     setKeyword(q)
     setSuggestOpen(false)
+    setHistory(getSearchHistory())
     if (!q.trim()) {
       setItems(null)
       setError('')
+      inputRef.current?.focus()
       return
     }
     let live = true
@@ -72,6 +76,7 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
     if (!text) return
     setKeyword(text)
     setSuggestOpen(false)
+    if (text === q.trim()) return
     window.location.hash = searchHash(text)
   }
 
@@ -79,7 +84,6 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
     <>
       <header className="search-hero">
         <h1>搜索</h1>
-        <p>搜一搜，发现更多精彩。片名、演员都能搜，边输入边联想。</p>
         <div className="search-box" ref={boxRef}>
           <form
             onSubmit={(event) => {
@@ -88,6 +92,7 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
             }}
           >
             <input
+              ref={inputRef}
               value={keyword}
               onChange={(event) => {
                 setKeyword(event.target.value)
@@ -100,6 +105,7 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
               aria-label="搜索"
               aria-autocomplete="list"
               aria-expanded={panelOpen}
+              autoFocus={!q.trim()}
             />
             <button className="btn" type="submit">
               开始探索
@@ -124,15 +130,14 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
             </ul>
           ) : null}
         </div>
-        {history.length ? (
-          <div className="chips">
-            {history.map((item) => (
-              <a key={item} className="chip" href={searchHash(item)}>
-                {item}
-              </a>
-            ))}
-          </div>
-        ) : null}
+        <SearchBrowse
+          history={history}
+          onPick={go}
+          onClear={() => {
+            clearSearchHistory()
+            setHistory([])
+          }}
+        />
       </header>
       {q.trim() ? (
         <section ref={gridRef}>
@@ -156,9 +161,7 @@ export function SearchPage({ q, libraryVersion }: { q: string; libraryVersion: n
             />
           ) : null}
         </section>
-      ) : (
-        <p className="note">输入片名或演员，开始探索吧。</p>
-      )}
+      ) : null}
     </>
   )
 }
