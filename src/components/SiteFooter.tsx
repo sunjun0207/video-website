@@ -5,7 +5,7 @@ export function SiteFooter() {
     <footer className="site-footer">
       <div className="wrap footer-grid">
         <div>
-          <p className="footer-brand">jun.sun</p>
+          <p className="footer-brand">碎冰视频</p>
           <p>好剧、好片、好心情，每天都有新惊喜。</p>
         </div>
         <div>

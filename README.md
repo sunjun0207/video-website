@@ -1,6 +1,6 @@
-# 观影 jun.sun 官网（video-website）
+# 碎冰视频官网（video-website）
 
-jun.sun 的观影官网。版式参照 fmusic-website：顶栏、二级导航、焦点图、片单和页脚。片库与播放沿用 video-h5，搜索和播放在开发时由 Vite 把 `/api-video-pomelo7-server/*` 转发到片库。没有改动 fmusic-website。
+碎冰视频的官网。版式参照 fmusic-website：顶栏、二级导航、焦点图、片单和页脚。片库与播放沿用 video-h5，搜索和播放在开发时由 Vite 把 `/api-video-pomelo7-server/*` 转发到片库。没有改动 fmusic-website。
 
 ## 快速开始
 
