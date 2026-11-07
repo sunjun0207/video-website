@@ -24,7 +24,7 @@ const NEXT_PREFETCH_LEAD = 90
 /** 刚开播的前这么多秒不探下一集，不和这一集抢带宽。 */
 const NEXT_PREFETCH_AFTER = 20
 /** 自动挑的线路开不了播时，一集最多自动换这么多次。 */
-const MAX_SWITCH = 2
+const MAX_SWITCH = 3
 
 function formatSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -51,7 +51,20 @@ function downloadSpeedText(progress: DownloadProgress, paused: boolean): string 
   return `${formatSize(progress.speed)}/s`
 }
 
-export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; onLibraryChange: () => void }) {
+export function PlayPage({
+  id,
+  ep,
+  visible = true,
+  onKeepEp,
+  onLibraryChange,
+}: {
+  id: string
+  ep: number
+  /** 离开播放页后播放器还在，只是缩成底部画面。这时播完不要把人拉回播放页。 */
+  visible?: boolean
+  onKeepEp?: (ep: number) => void
+  onLibraryChange: () => void
+}) {
   const [item, setItem] = useState<VideoItem | undefined>(() => getVideo(id))
   const [playUrl, setPlayUrl] = useState('')
   const [readyKey, setReadyKey] = useState('')
@@ -161,7 +174,8 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
     advanced.current = true
     rememberPlay(item, index + 1, 0)
     onLibraryChange()
-    window.location.hash = `#/play/${item.id}/${index + 1}`
+    if (visible) window.location.hash = `#/play/${item.id}/${index + 1}`
+    else onKeepEp?.(index + 1)
   }
 
   const toggleDownload = () => {

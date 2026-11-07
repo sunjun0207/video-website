@@ -70,10 +70,7 @@ export function SiteHeader({ route }: { route: Route }) {
             <rect x="4" y="8" width="28" height="20" rx="3" fill="#1aa6a0" />
             <path d="M15 13.5v9l8-4.5-8-4.5z" fill="#0b1f24" />
           </svg>
-          <span className="logo-text">
-            <small>观影</small>
-            jun.sun
-          </span>
+          <span className="logo-text">碎冰视频</span>
         </a>
         <nav className="main-nav" aria-label="主导航">
           <a className={DISCOVER.has(route.name) ? 'active' : ''} href="#/discover">

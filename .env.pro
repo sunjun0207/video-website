@@ -1,7 +1,7 @@
 # 生产环境  npm run dev:pro / npm run build
 
 VITE_APP_ENV=pro
-VITE_APP_TITLE=观影 jun.sun
+VITE_APP_TITLE=碎冰视频
 VITE_BASE=/
 VITE_SOURCEMAP=false
 VITE_DEV_PORT=5175

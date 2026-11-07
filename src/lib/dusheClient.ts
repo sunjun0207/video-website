@@ -505,8 +505,11 @@ function parsePlay(html: string): string {
   return src
 }
 
-function chooseVariant(text: string, playlistUrl: string): string {
-  if (!text.includes('#EXT-X-STREAM-INF')) return playlistUrl
+/** 优先用这条清晰度附近的，再往上。4K 码率高，网一慢就卡，放到最后。 */
+const VARIANT_BITRATE = 1_600_000
+
+function variantChoices(text: string, playlistUrl: string): string[] {
+  if (!text.includes('#EXT-X-STREAM-INF')) return [playlistUrl]
   const rows = text.split(/\r?\n/)
   const variants: { bandwidth: number; url: string }[] = []
   for (let index = 0; index < rows.length; index += 1) {
@@ -516,13 +519,12 @@ function chooseVariant(text: string, playlistUrl: string): string {
     if (!uri || uri.startsWith('#')) continue
     variants.push({ bandwidth, url: new URL(uri, playlistUrl).href })
   }
-  if (!variants.length) return playlistUrl
-  const usable = variants.filter((item) => item.bandwidth > 0 && item.bandwidth <= 1_000_000)
-  const pool = usable.length ? usable : variants
-  const sorted = usable.length
-    ? pool.sort((a, b) => b.bandwidth - a.bandwidth)
-    : pool.sort((a, b) => a.bandwidth - b.bandwidth)
-  return sorted[0].url
+  if (!variants.length) return [playlistUrl]
+  const preferred = variants.filter((item) => item.bandwidth > 0 && item.bandwidth <= VARIANT_BITRATE)
+  const rest = variants.filter((item) => !preferred.includes(item))
+  preferred.sort((a, b) => b.bandwidth - a.bandwidth)
+  rest.sort((a, b) => a.bandwidth - b.bandwidth)
+  return [...preferred, ...rest].map((item) => item.url)
 }
 
 function timeoutSignal(ms: number, signal?: AbortSignal): AbortSignal {
@@ -549,9 +551,12 @@ async function readPlaylist(upstream: string, signal?: AbortSignal): Promise<{ t
 
 function looksLikeMedia(buf: Uint8Array): boolean {
   if (buf.length < 188) return false
-  if (buf[0] === 0x47) return true
-  const head = String.fromCharCode(...buf.subarray(0, 32))
-  return head.includes('ftyp')
+  const scan = Math.min(buf.length - 188, 188)
+  for (let index = 0; index <= scan; index += 1) {
+    if (buf[index] === 0x47 && buf[index + 188] === 0x47) return true
+  }
+  const head = String.fromCharCode(...buf.subarray(0, Math.min(64, buf.length)))
+  return /ftyp|moof|styp|sidx/.test(head)
 }
 
 async function readLimited(
@@ -613,15 +618,27 @@ function streamUrl(_playlistText: string, playlistUrl: string, mediaUrl: string)
   return mediaUrl || playlistUrl
 }
 
-function firstSegment(text: string) {
+function listedSegments(text: string) {
   const rows = text.split(/\r?\n/)
-  for (let index = 0; index < rows.length; index += 1) {
+  const found: { duration: number; segment: string }[] = []
+  for (let index = 0; index < rows.length && found.length < 2; index += 1) {
     if (!rows[index].startsWith('#EXTINF:')) continue
     const duration = Number.parseFloat(rows[index].slice(8))
     const segment = (rows[index + 1] || '').trim()
-    if (segment && !segment.startsWith('#') && duration > 0) return { duration, segment }
+    if (segment && !segment.startsWith('#') && duration > 0) found.push({ duration, segment })
   }
-  return { duration: 0, segment: '' }
+  return found
+}
+
+/** 坏节点会回“OK”三个字节。同一条地址再要一次，常常就是正片。 */
+async function readSample(segmentUrl: string, ms: number, signal?: AbortSignal) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (signal?.aborted) return null
+    const started = Date.now()
+    const sample = await readLimited(playProxy(segmentUrl), ms, signal).catch(() => null)
+    if (sample && sample.bytes.length >= 188 && sample.size) return { ...sample, started }
+  }
+  return null
 }
 
 /** 列表带结束标记、加起来又不到正片的长度，就是占位片。没有结束标记的直播不算。 */
@@ -637,44 +654,32 @@ async function probeEntry(entry: PlayLine, quick = false, signal?: AbortSignal, 
   const html = await fetchHtml(entry.playPath, signal)
   const master = parsePlay(html)
   const playlist = await readPlaylist(master, signal)
-  const variantUrl = chooseVariant(playlist.text, playlist.url)
-  const media = variantUrl === playlist.url ? playlist : await readPlaylist(variantUrl, signal)
-  if (isPlaceholder(media.text)) return null
-  const mediaUrl = streamUrl(playlist.text, playlist.url, media.url)
-  if (!only && deadMedia.has(mediaUrl)) return null
-  if (quick) {
-    const first = firstSegment(media.text)
-    if (!first.segment) return null
-    const segmentUrl = new URL(first.segment, media.url).href
-    const started = Date.now()
-    const sample = await readLimited(playProxy(segmentUrl), 5000, signal).catch(() => null)
-    // 片段读不到，播放器同样读不到。有的节点坏了只回“OK”几个字节，不到一个 TS 包也算读不到。
-    if (!sample || sample.bytes.length < 188 || !sample.size) return null
-    const elapsed = Math.max((Date.now() - started) / 1000, 0.05)
-    return {
-      ...entry,
-      mediaUrl,
-      bitrate: (sample.size * 8) / first.duration,
-      ratio: (sample.bytes.length * first.duration) / (elapsed * sample.size),
+  const choices = variantChoices(playlist.text, playlist.url).slice(0, 3)
+  const windowMs = quick ? 5000 : 4000
+  for (const variantUrl of choices) {
+    if (signal?.aborted) return null
+    const media = variantUrl === playlist.url ? playlist : await readPlaylist(variantUrl, signal).catch(() => null)
+    if (!media || isPlaceholder(media.text)) continue
+    const mediaUrl = streamUrl(playlist.text, playlist.url, media.url)
+    if (!only && deadMedia.has(mediaUrl)) continue
+    // 加密的片段开头是密文，认不出 TS 同步字节，交给播放器解密。
+    const encrypted = /#EXT-X-KEY:METHOD=(AES-128|SAMPLE-AES)/.test(media.text)
+    for (const piece of listedSegments(media.text)) {
+      const segmentUrl = new URL(piece.segment, media.url).href
+      const sample = await readSample(segmentUrl, windowMs, signal)
+      if (!sample) continue
+      const playable = encrypted ? sample.bytes.length >= 188 : looksLikeMedia(sample.bytes)
+      if (!playable || (!quick && sample.aborted && !sample.headerSize)) continue
+      const elapsed = Math.max((Date.now() - sample.started) / 1000, 0.05)
+      return {
+        ...entry,
+        mediaUrl,
+        bitrate: (sample.size * 8) / piece.duration,
+        ratio: (sample.bytes.length * piece.duration) / (elapsed * sample.size),
+      }
     }
   }
-  const first = firstSegment(media.text)
-  const duration = first.duration
-  const segment = first.segment
-  if (!segment || !duration) return null
-  const segmentUrl = new URL(segment, media.url).href
-  const started = Date.now()
-  const { bytes, aborted, size, headerSize } = await readLimited(playProxy(segmentUrl), 4000, signal)
-  const elapsed = Math.max((Date.now() - started) / 1000, 0.05)
-  // 加密的片段开头是密文，认不出 TS 同步字节，交给播放器解密。
-  const encrypted = /#EXT-X-KEY:METHOD=(AES-128|SAMPLE-AES)/.test(media.text)
-  const playable = encrypted ? bytes.length >= 188 : looksLikeMedia(bytes)
-  if (!playable || !size || (aborted && !headerSize)) return null
-  return {
-    ...entry,
-    mediaUrl,
-    ratio: (bytes.length * duration) / (elapsed * size),
-  }
+  return null
 }
 
 /**
@@ -803,7 +808,8 @@ async function resolvePlay(list: PlayLine[], only: boolean, key: string): Promis
   }
   const measured = await probeRace(starters, true, QUICK_ENOUGH, only)
   const bestQuick = measured[0]
-  if (bestQuick?.mediaUrl) {
+  // 比实时还慢的先别定死。后面还有线路，挑一条跟得上的，免得一开播就卡。
+  if (bestQuick?.mediaUrl && (bestQuick.ratio || 0) >= 1) {
     if (series) preferredLine.set(series, lineSignature(bestQuick))
     const value = playValue(bestQuick)
     playCache.set(key, { at: Date.now(), value })
@@ -818,9 +824,10 @@ async function resolvePlay(list: PlayLine[], only: boolean, key: string): Promis
     pool = pool.concat(await probeRace(picked.slice(offset, offset + 3), false, 1.2, only))
     if (pool.some((item) => (item.ratio || 0) >= 1.2)) break
   }
-  if (!pool.length) throw new Error('这一集没有可播放的线路')
-  pool.sort((a, b) => (b.ratio || 0) - (a.ratio || 0))
-  const best = pool[0]
+  const candidates = bestQuick?.mediaUrl ? [...pool, bestQuick] : pool
+  if (!candidates.length) throw new Error('这一集没有可播放的线路')
+  candidates.sort((a, b) => (b.ratio || 0) - (a.ratio || 0))
+  const best = candidates[0]
   if (series) preferredLine.set(series, lineSignature(best))
   const value = playValue(best)
   playCache.set(key, { at: Date.now(), value })
