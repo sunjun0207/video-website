@@ -24,7 +24,7 @@ const NEXT_PREFETCH_LEAD = 90
 /** 刚开播的前这么多秒不探下一集，不和这一集抢带宽。 */
 const NEXT_PREFETCH_AFTER = 20
 /** 自动挑的线路开不了播时，一集最多自动换这么多次。 */
-const MAX_SWITCH = 2
+const MAX_SWITCH = 3
 
 function formatSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'

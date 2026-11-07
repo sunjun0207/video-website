@@ -2,11 +2,19 @@ export type PlaybackSnapshot = {
   playing: boolean
   current: number
   duration: number
+  /** 0 到 1，静音时仍保留拖动前的音量。 */
+  volume: number
+  muted: boolean
+  loop: boolean
 }
 
 type Controls = {
   toggle: () => void
   pause: () => void
+  seek: (seconds: number) => void
+  setVolume: (value: number) => void
+  toggleMute: () => void
+  toggleLoop: () => void
 }
 
 let snapshot: PlaybackSnapshot | null = null
@@ -19,9 +27,13 @@ function emit() {
 }
 
 export function publishPlayback(next: PlaybackSnapshot | null, immediate = false) {
-  const playingChanged = Boolean(snapshot?.playing) !== Boolean(next?.playing)
+  const changed =
+    Boolean(snapshot?.playing) !== Boolean(next?.playing) ||
+    Boolean(snapshot?.muted) !== Boolean(next?.muted) ||
+    Boolean(snapshot?.loop) !== Boolean(next?.loop) ||
+    (snapshot?.volume ?? 1) !== (next?.volume ?? 1)
   snapshot = next
-  if (next === null || immediate || playingChanged) {
+  if (next === null || immediate || changed) {
     window.clearTimeout(queued)
     queued = 0
     emit()
@@ -48,6 +60,24 @@ export function togglePlayback() {
 
 export function pausePlayback() {
   controls?.pause()
+}
+
+export function seekPlayback(seconds: number) {
+  if (!Number.isFinite(seconds)) return
+  controls?.seek(Math.max(0, seconds))
+}
+
+export function setVolumePlayback(value: number) {
+  if (!Number.isFinite(value)) return
+  controls?.setVolume(value)
+}
+
+export function toggleMutePlayback() {
+  controls?.toggleMute()
+}
+
+export function toggleLoopPlayback() {
+  controls?.toggleLoop()
 }
 
 export function subscribePlayback(listener: () => void) {

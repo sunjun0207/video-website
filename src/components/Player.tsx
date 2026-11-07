@@ -40,6 +40,17 @@ function VolumeIcon({ muted, volume }: { muted: boolean; volume: number }) {
   )
 }
 
+function LoopIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M17 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M3 11V9a4 4 0 0 1 4-4h14" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M7 22l-4-4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M21 13v2a4 4 0 0 1-4 4H3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function FullscreenIcon({ active }: { active: boolean }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -135,6 +146,7 @@ export function Player({
   const [fullscreenOn, setFullscreenOn] = useState(false)
   const [volume, setVolume] = useState(1)
   const [muted, setMuted] = useState(false)
+  const [loop, setLoop] = useState(false)
   const playingRef = useRef(false)
   const chromeRef = useRef(true)
   const overControls = useRef(false)
@@ -142,12 +154,18 @@ export function Player({
   const savedVolume = useRef(1)
   const volumeRef = useRef(1)
   const mutedRef = useRef(false)
+  const loopRef = useRef(false)
   const hideTimer = useRef(0)
   const toggleRef = useRef<() => void>(() => {})
+  const seekRef = useRef<(value: number) => void>(() => {})
+  const volumeActions = useRef<(value: number) => void>(() => {})
+  const muteActions = useRef<() => void>(() => {})
+  const loopActions = useRef<() => void>(() => {})
   const fullscreenActions = useRef({
     onVideoClick: () => {},
     toggle: () => {},
     toggleMute: () => {},
+    toggleLoop: () => {},
     fullscreen: () => {},
     seek: (_value: number) => {},
     changeVolume: (_value: number) => {},
@@ -159,6 +177,7 @@ export function Player({
   chromeRef.current = chrome
   volumeRef.current = volume
   mutedRef.current = muted
+  loopRef.current = loop
 
   onEndedRef.current = onEnded
   onStartFailRef.current = onStartFail
@@ -178,6 +197,7 @@ export function Player({
     if (!video || !episode.url) return
     video.volume = mutedRef.current ? 0 : volumeRef.current
     video.muted = mutedRef.current || volumeRef.current === 0
+    video.loop = false
     let hls: Hls | undefined
     const stops: (() => void)[] = []
     let live = true
@@ -190,16 +210,22 @@ export function Player({
       gaveUp = true
       return onStartFailRef.current?.() ?? false
     }
-    const startTimer = window.setTimeout(() => giveUpRef.current(), START_LIMIT)
+    const startTimer = window.setTimeout(() => {
+      if (!live || video.buffered.length) return
+      const switched = giveUpRef.current()
+      if (!live || switched || video.buffered.length) return
+      setError('播放遇到一点问题，换条线路再试试。')
+    }, START_LIMIT)
     const capLevel = (instance: Hls) => {
-      const capBitrate = 1_000_000
+      const capBitrate = 1_600_000
       let cap = 0
       instance.levels.forEach((level, index) => {
         const bitrate = level.bitrate || 0
         if (bitrate > 0 && bitrate <= capBitrate) cap = index
       })
+      // 只封顶，不锁死。网一慢还能降到更低的清晰度，不会卡在某一档上。
       instance.autoLevelCapping = cap
-      instance.loadLevel = cap
+      instance.nextLevel = cap
     }
     const playNative = () => {
       video.src = episode.url
@@ -241,12 +267,12 @@ export function Player({
         maxBufferLength: 60,
         maxMaxBufferLength: 120,
         backBufferLength: 12,
-        maxBufferHole: 0.5,
+        maxBufferHole: 1.5,
         startFragPrefetch: true,
         maxStarvationDelay: 4,
         maxLoadingDelay: 4,
-        nudgeOffset: 0.15,
-        nudgeMaxRetry: 12,
+        nudgeOffset: 0.3,
+        nudgeMaxRetry: 20,
         manifestLoadPolicy: { default: retryPolicy },
         playlistLoadPolicy: { default: retryPolicy },
         fragLoadPolicy: { default: retryPolicy },
@@ -255,10 +281,21 @@ export function Player({
       })
       hls.loadSource(episode.url)
       hls.attachMedia(video)
+      let fragMiss = 0
       hls.on(Hls.Events.MANIFEST_PARSED, () => capLevel(hls as Hls))
       hls.on(Hls.Events.INIT_PTS_FOUND, (_, data) => skipper.found(data))
+      hls.on(Hls.Events.FRAG_LOADED, () => {
+        fragMiss = 0
+      })
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (!data.fatal || !hls) return
+        if (!hls) return
+        const missed = data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR || data.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT
+        if (missed) {
+          fragMiss += 1
+          // 连续几段都是空包或超时，重新拉播放列表，换一个还能回画面的节点。
+          if (fragMiss === 3) hls.startLoad()
+        }
+        if (!data.fatal) return
         if (giveUpRef.current()) return
         if (!recovered) {
           recovered = true
@@ -297,7 +334,17 @@ export function Player({
       lastTime = video.currentTime
       still += 1
       if (still >= 2) setBuffering(true)
-      if (still === 8 && hls) hls.startLoad()
+      if (still === 3 && hls && hls.currentLevel > 0) hls.nextLevel = hls.currentLevel - 1
+      if (still === 4) {
+        for (let index = 0; index < video.buffered.length; index += 1) {
+          const start = video.buffered.start(index)
+          if (start > video.currentTime && start - video.currentTime < 3) {
+            video.currentTime = start + 0.05
+            break
+          }
+        }
+      }
+      if (still === 6 && hls) hls.startLoad()
     }, 1000)
     const bootTimer = window.setTimeout(() => {
       if (booted.current) return
@@ -352,6 +399,7 @@ export function Player({
         const button = target.closest('button')
         if (!button || button.matches(':disabled')) return
         if (button.classList.contains('control-volume')) actions.toggleMute()
+        else if (button.classList.contains('control-loop')) actions.toggleLoop()
         else if (button.classList.contains('control-fullscreen')) actions.fullscreen()
         else if (button.classList.contains('control-download')) actions.onDownload?.()
         else actions.toggle()
@@ -450,11 +498,18 @@ export function Player({
         playing: !video.paused && !video.ended,
         current: video.currentTime || 0,
         duration: Number.isFinite(video.duration) ? video.duration : 0,
+        volume: volumeRef.current,
+        muted: mutedRef.current || volumeRef.current === 0,
+        loop: loopRef.current,
       })
     }
     bindPlayback({
       toggle: () => toggleRef.current(),
       pause: () => video.pause(),
+      seek: (value) => seekRef.current(value),
+      setVolume: (value) => volumeActions.current(value),
+      toggleMute: () => muteActions.current(),
+      toggleLoop: () => loopActions.current(),
     })
     report()
     video.addEventListener('play', report)
@@ -477,10 +532,25 @@ export function Player({
   const seek = (value: number) => {
     const video = videoRef.current
     if (!video) return
-    video.currentTime = value
-    setCurrent(value)
-    onTime(value)
+    const duration = Number.isFinite(video.duration) ? video.duration : 0
+    const next = duration > 0 ? Math.min(Math.max(value, 0), duration) : Math.max(value, 0)
+    video.currentTime = next
+    setCurrent(next)
+    onTime(next)
+    publishPlayback(
+      {
+        playing: !video.paused && !video.ended,
+        current: next,
+        duration,
+        volume: volumeRef.current,
+        muted: mutedRef.current || volumeRef.current === 0,
+        loop: loopRef.current,
+      },
+      true,
+    )
   }
+
+  seekRef.current = seek
 
   const fullscreen = () => {
     const stage = stageRef.current
@@ -489,15 +559,34 @@ export function Player({
     else void stage.requestFullscreen().catch(() => undefined)
   }
 
+  const publishControls = (immediate = true) => {
+    const video = videoRef.current
+    publishPlayback(
+      {
+        playing: Boolean(video && !video.paused && !video.ended),
+        current: video?.currentTime || 0,
+        duration: video && Number.isFinite(video.duration) ? video.duration : 0,
+        volume: volumeRef.current,
+        muted: mutedRef.current || volumeRef.current === 0,
+        loop: loopRef.current,
+      },
+      immediate,
+    )
+  }
+
   const changeVolume = (value: number) => {
     const video = videoRef.current
     const next = Math.min(1, Math.max(0, value))
     if (next > 0) savedVolume.current = next
+    volumeRef.current = next
+    mutedRef.current = next === 0
     setVolume(next)
     setMuted(next === 0)
-    if (!video) return
-    video.volume = next
-    video.muted = next === 0
+    if (video) {
+      video.volume = next
+      video.muted = next === 0
+    }
+    publishControls()
   }
 
   const toggleMute = () => {
@@ -507,14 +596,30 @@ export function Player({
       const restore = savedVolume.current > 0 ? savedVolume.current : 1
       video.muted = false
       video.volume = restore
+      volumeRef.current = restore
+      mutedRef.current = false
       setVolume(restore)
       setMuted(false)
+      publishControls()
       return
     }
     savedVolume.current = video.volume || savedVolume.current || 1
     video.muted = true
+    mutedRef.current = true
     setMuted(true)
+    publishControls()
   }
+
+  const toggleLoop = () => {
+    const next = !loopRef.current
+    loopRef.current = next
+    setLoop(next)
+    publishControls()
+  }
+
+  volumeActions.current = changeVolume
+  muteActions.current = toggleMute
+  loopActions.current = toggleLoop
 
   const poke = () => {
     if (!playingRef.current || !chromeRef.current || hideBlocked()) return
@@ -533,6 +638,7 @@ export function Player({
     onVideoClick,
     toggle,
     toggleMute,
+    toggleLoop,
     fullscreen,
     seek,
     changeVolume,
@@ -542,6 +648,14 @@ export function Player({
   }
 
   const finish = () => {
+    if (loopRef.current) {
+      const video = videoRef.current
+      if (!video) return
+      finished.current = false
+      video.currentTime = 0
+      void video.play().catch(() => setBlocked(true))
+      return
+    }
     if (finished.current) return
     finished.current = true
     onEndedRef.current()
@@ -594,14 +708,14 @@ export function Player({
         onProgress={(event) => {
           const video = event.currentTarget
           if (resumed.current || booted.current) return
-          if (bufferedAhead(video) < 8) return
+          if (bufferedAhead(video) < 4) return
           booted.current = true
           void video.play().catch(() => setBlocked(true))
         }}
         onCanPlay={(event) => {
           const video = event.currentTarget
           if (resumed.current || booted.current) return
-          if (bufferedAhead(video) < 8 && video.readyState < 4) return
+          if (bufferedAhead(video) < 4 && video.readyState < 4) return
           booted.current = true
           void video.play().catch(() => setBlocked(true))
         }}
@@ -685,6 +799,16 @@ export function Player({
           aria-label="音量"
           onChange={(event) => changeVolume(Number(event.target.value))}
         />
+        <button
+          type="button"
+          className={loop ? 'control-loop is-on' : 'control-loop'}
+          aria-pressed={loop}
+          aria-label={loop ? '关闭循环播放' : '开启循环播放'}
+          onClick={toggleLoop}
+        >
+          <LoopIcon />
+          <span>循环</span>
+        </button>
         <button type="button" className="control-fullscreen" onClick={fullscreen} aria-label={fullscreenOn ? '退出全屏' : '全屏'}>
           <FullscreenIcon active={fullscreenOn} />
           <span>{fullscreenOn ? '退出全屏' : '全屏'}</span>
