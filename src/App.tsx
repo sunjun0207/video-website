@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
+import { MiniPlayer } from './components/MiniPlayer'
 import { SiteFooter } from './components/SiteFooter'
 import { SiteHeader } from './components/SiteHeader'
 import { SubNav } from './components/SubNav'
+import { pausePlayback } from './lib/playbackSession'
 import { useRoute } from './lib/route'
 import { onCatalogChange } from './lib/source'
 import { searchAnchor } from './lib/storage'
@@ -24,9 +26,23 @@ import { ToplistPage } from './pages/ToplistPage'
 export default function App() {
   const route = useRoute()
   const [libraryVersion, setLibraryVersion] = useState(0)
+  const [kept, setKept] = useState<{ id: string; ep: number } | null>(null)
   const bump = useCallback(() => setLibraryVersion((value) => value + 1), [])
+  const playing = route.name === 'play' && Boolean(route.id)
+  const live = playing && route.id ? { id: route.id, ep: route.ep } : kept
+  const showMini = Boolean(live) && !playing
 
   useEffect(() => onCatalogChange(bump), [bump])
+
+  useEffect(() => {
+    if (route.name === 'play' && route.id) setKept({ id: route.id, ep: route.ep })
+  }, [route])
+
+  useEffect(() => {
+    document.body.classList.toggle('has-player', showMini)
+    if (!playing && document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
+    return () => document.body.classList.remove('has-player')
+  }, [showMini, playing])
 
   useEffect(() => {
     document.title = documentTitle(route)
@@ -52,14 +68,35 @@ export default function App() {
         {route.name === 'channel' && <ChannelPage route={route} />}
         {route.name === 'fresh' && <FreshPage />}
         {route.name === 'detail' && <DetailPage id={route.id || ''} libraryVersion={libraryVersion} onLibraryChange={bump} />}
-        {route.name === 'play' && <PlayPage id={route.id || ''} ep={route.ep} onLibraryChange={bump} />}
         {route.name === 'search' && <SearchPage q={route.q} libraryVersion={libraryVersion} />}
         {route.name === 'favorites' && <FavoritesPage libraryVersion={libraryVersion} onLibraryChange={bump} />}
         {route.name === 'guide' && <GuidePage />}
         {route.name === 'about' && <AboutPage />}
         {route.name === 'notfound' && <NotFoundPage />}
+        {live ? (
+          <div className={playing ? undefined : 'play-dock'} inert={playing ? undefined : true}>
+            <PlayPage
+              key={live.id}
+              id={live.id}
+              ep={live.ep}
+              visible={playing}
+              onKeepEp={(ep) => setKept((current) => (current ? { id: current.id, ep } : current))}
+              onLibraryChange={bump}
+            />
+          </div>
+        ) : null}
       </main>
       <SiteFooter />
+      {showMini && live ? (
+        <MiniPlayer
+          id={live.id}
+          ep={live.ep}
+          onClose={() => {
+            pausePlayback()
+            setKept(null)
+          }}
+        />
+      ) : null}
     </>
   )
 }

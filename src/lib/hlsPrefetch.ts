@@ -2,13 +2,13 @@ import type Hls from 'hls.js'
 import type { Fragment, FragmentLoaderContext, HlsConfig, Loader, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
 
 /** 片段一段一段地拉，每段都要等一次回应。有的线路一段要等一两秒，刚好够跟上播放，稍慢一点就卡。往后多拉几段一起等。 */
-const AHEAD = 3
+const AHEAD = 2
 /** 这么久还没有回应，多半是连接卡死了，重新请求。浏览器里排队的时间也算在内，不能太短。 */
 const FIRST_BYTE_MS = 12_000
 /** 开始回数据以后，这么久一个字节都没再来，同样重新请求。 */
 const STALL_MS = 10_000
 /** 一段最多请求几次，还不行就交给 hls.js 按它自己的规则重试。 */
-const ATTEMPTS = 3
+const ATTEMPTS = 4
 /** 有的节点坏了只回“OK”几个字节，不到一个 TS 包的回应不是视频。 */
 const MIN_BYTES = 188
 
@@ -130,7 +130,8 @@ async function fetchSegment(url: string, range: ByteRange | null, signal: AbortS
       const code = error instanceof LoadFailure ? error.code : 0
       const lasting = code >= 400 && code < 500 && code !== 408 && code !== 429
       if (signal.aborted || lasting || attempt >= ATTEMPTS) throw error
-      await pause(attempt * 600, signal)
+      // “OK” 这种空包马上再要；别的失败隔一会儿，免得把节点打满。
+      await pause(code === 502 ? 200 : attempt * 600, signal)
     }
   }
 }

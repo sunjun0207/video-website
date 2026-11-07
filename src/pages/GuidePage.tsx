@@ -26,7 +26,7 @@ export function GuidePage() {
           </a>
         </div>
         <div className="device" aria-hidden="true">
-          <div className="device-top">jun.sun</div>
+          <div className="device-top">碎冰视频</div>
           <div className="device-line">精彩好剧，一眼心动</div>
           <div className="device-line dim">正片 · 正在播放</div>
           <div className="device-bar">
