@@ -51,7 +51,20 @@ function downloadSpeedText(progress: DownloadProgress, paused: boolean): string 
   return `${formatSize(progress.speed)}/s`
 }
 
-export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; onLibraryChange: () => void }) {
+export function PlayPage({
+  id,
+  ep,
+  visible = true,
+  onKeepEp,
+  onLibraryChange,
+}: {
+  id: string
+  ep: number
+  /** 离开播放页后播放器还在，只是缩成底部画面。这时播完不要把人拉回播放页。 */
+  visible?: boolean
+  onKeepEp?: (ep: number) => void
+  onLibraryChange: () => void
+}) {
   const [item, setItem] = useState<VideoItem | undefined>(() => getVideo(id))
   const [playUrl, setPlayUrl] = useState('')
   const [readyKey, setReadyKey] = useState('')
@@ -161,7 +174,8 @@ export function PlayPage({ id, ep, onLibraryChange }: { id: string; ep: number; 
     advanced.current = true
     rememberPlay(item, index + 1, 0)
     onLibraryChange()
-    window.location.hash = `#/play/${item.id}/${index + 1}`
+    if (visible) window.location.hash = `#/play/${item.id}/${index + 1}`
+    else onKeepEp?.(index + 1)
   }
 
   const toggleDownload = () => {

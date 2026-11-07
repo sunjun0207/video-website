@@ -4,6 +4,7 @@ import hlsWorkerUrl from 'hls.js/dist/hls.worker.js?url'
 import { createAdSkipper } from '../lib/adSkip'
 import { createSegmentPrefetch } from '../lib/hlsPrefetch'
 import { absolutePlayUrl, rewritePlaylist, upstreamFromPlay } from '../lib/mediaProxy'
+import { bindPlayback, publishPlayback } from '../lib/playbackSession'
 import type { Episode } from '../lib/types'
 
 type Props = {
@@ -142,6 +143,7 @@ export function Player({
   const volumeRef = useRef(1)
   const mutedRef = useRef(false)
   const hideTimer = useRef(0)
+  const toggleRef = useRef<() => void>(() => {})
   const fullscreenActions = useRef({
     onVideoClick: () => {},
     toggle: () => {},
@@ -437,6 +439,40 @@ export function Player({
       void video.play().catch(() => setBlocked(true))
     } else video.pause()
   }
+
+  toggleRef.current = toggle
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const report = () => {
+      publishPlayback({
+        playing: !video.paused && !video.ended,
+        current: video.currentTime || 0,
+        duration: Number.isFinite(video.duration) ? video.duration : 0,
+      })
+    }
+    bindPlayback({
+      toggle: () => toggleRef.current(),
+      pause: () => video.pause(),
+    })
+    report()
+    video.addEventListener('play', report)
+    video.addEventListener('pause', report)
+    video.addEventListener('timeupdate', report)
+    video.addEventListener('loadedmetadata', report)
+    video.addEventListener('ended', report)
+    return () => {
+      video.removeEventListener('play', report)
+      video.removeEventListener('pause', report)
+      video.removeEventListener('timeupdate', report)
+      video.removeEventListener('loadedmetadata', report)
+      video.removeEventListener('ended', report)
+      bindPlayback(null)
+    }
+  }, [episode.url, videoRef])
+
+  useEffect(() => () => publishPlayback(null, true), [])
 
   const seek = (value: number) => {
     const video = videoRef.current
